@@ -23,8 +23,10 @@ LEGAL = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS", "PATENTS", "COPYR
 SOURCE_URL = "https://github.com/VintlGvard/LugoTUI"
 
 
-def command(*args, cwd=ROOT, env=None):
-    return subprocess.check_output(args, cwd=cwd, env=env, text=True).strip()
+def command(cmd, *args, cwd=ROOT, env=None):
+    if cmd not in ("git", "go"):
+        raise ValueError(f"Disallowed command: {cmd}")
+    return subprocess.run([cmd, *args], cwd=cwd, env=env, text=True, check=True, capture_output=True, shell=False).stdout.strip()
 
 
 def environment(system, arch):
@@ -163,11 +165,12 @@ def build(args):
             host_system = {"Linux": "linux", "Darwin": "darwin", "Windows": "windows"}.get(platform.system())
             host_arch = {"x86_64": "amd64", "AMD64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine())
             if (system, arch) == (host_system, host_arch):
-                version = command(str(binary), "--version", cwd=payload)
+                exe = "./lugotui.exe" if system == "windows" else "./lugotui"
+                version = subprocess.run([exe, "--version"], cwd=payload, text=True, check=True, capture_output=True, shell=False).stdout.strip()
                 if args.version not in version or commit not in version:
                     raise RuntimeError(f"Incorrect CLI version: {version}")
-                subprocess.run([str(binary), "--check"], cwd=payload, check=True)
-                subprocess.run([str(binary), "--app", "demo.lua", "--check"], cwd=payload, check=True)
+                subprocess.run([exe, "--check"], cwd=payload, check=True, shell=False)
+                subprocess.run([exe, "--app", "demo.lua", "--check"], cwd=payload, check=True, shell=False)
             files = sorted(path for path in payload.rglob("*") if path.is_file())
             expected = {path.relative_to(payload).as_posix(): path.read_bytes() for path in files}
             artifact = args.output / (name + (".zip" if system == "windows" else ".tar.gz"))
