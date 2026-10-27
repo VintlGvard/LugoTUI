@@ -31,7 +31,20 @@ type Options struct {
 }
 
 func Run(args []string) error {
+	return RunCLI(args, "")
+}
+
+func RunCLI(args []string, buildVersion string) error {
 	flags := flag.NewFlagSet("lugotui", flag.ContinueOnError)
+	flags.Usage = func() {
+		fmt.Fprintln(flags.Output(), "Usage: lugotui [flags]")
+		flags.PrintDefaults()
+		fmt.Fprintln(flags.Output(), "\nExamples:\n  lugotui --app app.lua\n  lugotui --app app.lua --check\n  lugotui --app app.lua --snapshot\n  lugotui --sandbox --app app.lua --check")
+	}
+	var version *bool
+	if buildVersion != "" {
+		version = flags.Bool("version", false, "print version, commit, and Go version and exit")
+	}
 	file := flags.String("app", "", "Lua application file (default: embedded demo)")
 	check := flags.Bool("check", false, "validate and render without terminal")
 	socket := flags.String("socket", "", "local agent Unix socket path (permissions 0600)")
@@ -42,6 +55,10 @@ func Run(args []string) error {
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	if version != nil && *version {
+		fmt.Println(buildVersion)
+		return nil
 	}
 	appFile := *file
 	if appFile == "" && !*check && !*snapshot {
@@ -96,7 +113,6 @@ func RunOptions(options Options) error {
 	if err = screen.Init(); err != nil {
 		return err
 	}
-	defer screen.Fini()
 	return runScreen(options, screen, r, loadSource)
 }
 
@@ -121,6 +137,7 @@ func readSource(path string) (string, error) {
 }
 
 func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSource func() (string, error)) error {
+	defer screen.Fini()
 	defer func() { r.Close() }()
 	bindings, err := reservedKeys(options.ReservedKeys)
 	if err != nil {

@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      EXPECTED_COMMIT: ${{ github.sha }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: stable
+      - name: Test exact tag commit
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          go test ./...
+          go vet ./...
+      - name: Race tests
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race ./...
+      - name: Build and validate every archive before any upload
+        run: python3 .github/scripts/release.py --version "$TAG" --commit "$EXPECTED_COMMIT" --output "$RUNNER_TEMP/release-assets"
+      - name: Create new draft, upload without clobber, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          if [[ "${TAG%%+*}" == *-* ]]; then prerelease+=(--prerelease); fi
+          gh release create "$TAG" --verify-tag --target "$EXPECTED_COMMIT" --draft --generate-notes "${prerelease[@]}"
+          gh release upload "$TAG" "$RUNNER_TEMP/release-assets/"*
+          gh release edit "$TAG" --draft=false

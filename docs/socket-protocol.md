@@ -24,16 +24,18 @@ Messages are exchanged as single-line JSON objects terminated with a newline (`\
 ### Request Methods
 
 #### 1. Snapshot (`snapshot`)
-Inspect the full semantic widget tree, focus, dimensions, and protocol version.
+Inspect a flat semantic node list, focus, bounds, and protocol version. The current beta uses the exact case-sensitive field names shown below.
 ```json
 {"method":"snapshot"}
 ```
 
 Response payload includes:
 - `protocol_version`: `1`
-- `revision`: Current integer revision counter
-- `focus`: ID of the focused node
-- `tree`: Hierarchical JSON representation of the widget tree
+- `Revision`: Current integer revision counter. Use this value as lowercase `packet.revision` in an `apply` request.
+- `Focus`: ID of the focused node.
+- `Nodes`: Flat preorder list, including unnamed nodes. Each entry has `ID`, `Type`, `Bounds` (`X`, `Y`, `W`, `H`), and `Children` (child IDs, or `null` for a leaf). Unnamed IDs can be empty; this is not a complete reconstructable widget tree.
+
+The snapshot does not include widget text, arbitrary properties, or the internal model. `--snapshot` prints this snapshot object directly; the socket wraps it in `{"ok":true,"result":...}`. Do not expect lowercase `revision`, `focus`, or a `tree` field in the snapshot.
 
 #### 2. Apply Mutations (`apply`)
 Stage transactional updates against a specific tree revision:
@@ -54,7 +56,7 @@ Stage transactional updates against a specific tree revision:
 ```
 Supported operations in the packet:
 - `"op": "patch"`: Updates specified properties of node `id`.
-- `"op": "replace"`: Replaces the entire subtree at node `id` with a new node definition.
+- `"op": "replace"`: Replaces the entire subtree at node `id` with a new node definition in `tree`, for example `{"op":"replace","id":"answer","tree":{"type":"text","id":"answer","props":{"text":"Hello"}}}`. Node definitions use lowercase `type`, `id`, `props`, and optional `children`; they are not snapshot `Nodes` entries.
 
 #### 3. Dispatch Message (`message`)
 Trigger a named Lua action with an optional payload dictionary:

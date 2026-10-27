@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +26,15 @@ return {view=ui.text{id='text',text='before'}, keymap={F1='emit',['Ctrl+Q']='emi
 
 type observedScreen struct {
 	tcell.SimulationScreen
-	shows chan string
+	shows     chan string
+	finalized chan struct{}
+}
+
+func (s *observedScreen) Fini() {
+	s.SimulationScreen.Fini()
+	if s.finalized != nil {
+		close(s.finalized)
+	}
 }
 
 func (s *observedScreen) Show() {
@@ -66,7 +76,6 @@ func startLoop(t *testing.T, options Options, source func() (string, error)) (*o
 		if err := receive(t, done); err != nil {
 			t.Error(err)
 		}
-		s.Fini()
 	})
 	return s, done
 }
@@ -90,7 +99,6 @@ func TestAnimationRedrawOnlyOnFrameChange(t *testing.T) {
 		if err := receive(t, done); err != nil {
 			t.Error(err)
 		}
-		s.Fini()
 	})
 	first := receive(t, s.shows)
 	select {
@@ -357,7 +365,6 @@ func TestDefaultQuitLoop(t *testing.T) {
 		if err := receive(t, done); err != nil {
 			t.Fatal(err)
 		}
-		s.Fini()
 	}
 }
 
@@ -381,7 +388,6 @@ actions={stop=function() ui.patch('spin',{running=false}) end}}`
 		if err := receive(t, done); err != nil {
 			t.Error(err)
 		}
-		s.Fini()
 	})
 	initial := receive(t, s.shows)
 	animationDeadline := time.NewTimer(time.Second)
@@ -417,6 +423,86 @@ animated:
 		case <-deadline.C:
 			t.Fatal("inactive animation kept redrawing")
 		}
+	}
+}
+
+func TestLoopExitReleasesResources(t *testing.T) {
+	for _, failSocket := range []bool{false, true} {
+		t.Run(fmt.Sprint("socket-error=", failSocket), func(t *testing.T) {
+			r, err := engine.Load(loopSource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cancelled := make(chan struct{})
+			if _, err := r.StartTask("done", func(ctx context.Context) (map[string]any, error) {
+				<-ctx.Done()
+				close(cancelled)
+				return nil, ctx.Err()
+			}); err != nil {
+				t.Fatal(err)
+			}
+			s := &observedScreen{SimulationScreen: tcell.NewSimulationScreen("UTF-8"), shows: make(chan string, 8), finalized: make(chan struct{})}
+			if err := s.Init(); err != nil {
+				t.Fatal(err)
+			}
+			s.SetSize(60, 8)
+			dir, err := os.MkdirTemp(".", ".lifecycle-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Remove(dir); err != nil {
+					t.Error(err)
+				}
+			})
+			path := filepath.Join(dir, "agent.sock")
+			if failSocket {
+				path = filepath.Join(dir, "missing", "agent.sock")
+			}
+			done := make(chan error, 1)
+			go func() { done <- runScreen(Options{SocketPath: path}, s, r, nil) }()
+			var conn net.Conn
+			if !failSocket {
+				receive(t, s.shows)
+				conn, err = net.Dial("unix", path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.Close()
+				s.PostEventWait(tcell.NewEventKey(tcell.KeyCtrlQ, 0, 0))
+			}
+			if err := receive(t, done); (err != nil) != failSocket {
+				t.Fatalf("exit error: %v", err)
+			}
+			receive(t, cancelled)
+			receive(t, s.finalized)
+			if !failSocket {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("socket remains: %v", err)
+				}
+				if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := conn.Read(make([]byte, 1)); err == nil {
+					t.Fatal("socket connection remains open")
+				} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+					t.Fatal("socket close timed out")
+				}
+			}
+		})
+	}
+}
+
+func TestSandboxFailsClosedWithoutDependencies(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux sandbox")
+	}
+	t.Setenv("PATH", t.TempDir())
+	if err := Sandbox(Options{Check: true}); err == nil || !strings.Contains(err.Error(), "requires bubblewrap; refusing unisolated execution") {
+		t.Fatal(err)
+	}
+	if err := Sandbox(Options{SocketPath: "agent.sock"}); err == nil || !strings.Contains(err.Error(), "socket transport is disabled") {
+		t.Fatal(err)
 	}
 }
 

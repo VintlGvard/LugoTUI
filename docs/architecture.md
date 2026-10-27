@@ -74,6 +74,7 @@ import (
 
 func main() {
     err := tui.RunOptions(tui.Options{
+        AppFile: "app.lua", // Use the companion Lua file below.
         Theme: tui.Theme{Background: "black", FocusForeground: "cyan"},
         ReservedKeys: &tui.ReservedKeys{
             Quit:   []string{"Ctrl+Q"},
@@ -106,11 +107,32 @@ func main() {
 }
 ```
 
+Save this companion `app.lua` next to the Go program and run `go run .` from that directory:
+
+```lua
+local ui = require('ui')
+return {
+  api_version = 1,
+  view = ui.column {
+    ui.input {id = 'message', bind = 'message', height = 1},
+    ui.button {id = 'send', text = 'Send', on_click = 'send', height = 1},
+    ui.text {id = 'reply', text = 'Waiting', height = 1}
+  },
+  actions = {
+    send = function() host.dispatch('message.send', {text = ui.get('message') or ''}) end,
+    ['agent.text'] = function(e) ui.patch('reply', {text = e.text}) end
+  }
+}
+```
+
+For a complete worker flow with user-visible errors and cancellation, see [examples/worker](../examples/worker/).
+
 ### Managed Runner Details
 - **`OnEvent` Execution:** Runs synchronously on the runtime owner goroutine after input, socket mutations, and task completion. Keep it short; use `StartTask` for blocking work.
-- **Task Results:** The runner receives task results and invokes `HandleTask`. Callback errors appear in the diagnostic line on the bottom of the screen.
+- **Task Results:** The runner receives task results and invokes `HandleTask`. Success calls the named Lua action with the returned payload. A worker error (including a recovered panic) does not call that action; it appears in the diagnostic line, as do `OnEvent` errors. To show an application-specific error in a widget, return a successful payload describing that error and handle it in Lua.
 - **Event Consumption:** When provided, `OnEvent` consumes host events exclusively (including when an agent socket is enabled; socket `events` is not a second subscriber). Without a callback, socket consumers retain the queue; without either, events are discarded.
-- **Headless Checks:** `Check` and `Snapshot` options validate and render a single frame without opening a terminal window.
+- **Headless Checks:** `Check` and `Snapshot` options validate and render a single frame without opening a terminal window; they do not run the interactive event/worker loop.
+- **Runtime Lifecycle:** The runner owns `Close`. Do not close a runtime passed to `OnEvent`, consume its task channel, or keep the runtime for later use. Successful reload closes the old runtime, cancels its tasks, and supplies a new runtime to subsequent callbacks; failure keeps the old runtime active. Shutdown cancels tasks without joining workers.
 - **Reserved Keys:** `ReservedKeys: nil` preserves `Ctrl+Q` / `Ctrl+C` to quit and `F5` to reload. A non-nil struct replaces both lists; omitted or empty lists disable that reserved action and let keys pass through to Lua. Names follow `tcell.EventKey.Name()`. OS interrupt/termination signals still terminate the process even when keyboard shortcuts are disabled.
 - **Theming:** `Theme{}` retains built-in defaults; empty fields inherit defaults. Set `Options.Theme` for the stock runner or call `Runtime.SetTheme(theme)` when embedding. Explicit node `fg`/`bg` and rich-span colors override theme colors. Reload preserves the runtime theme. `DefaultTheme()` returns built-in values.
 
@@ -181,9 +203,9 @@ func main() {
 ## 5. Ownership, Goroutines & Background Tasks
 
 - **Single-Goroutine Ownership:** Every runtime method belongs to one owner goroutine, including `StartTask`, `CancelTask`, `TaskResults`, and `Close`. `OnEvent` executes on that goroutine.
-- **Thread Isolation:** Never pass the `Runtime` or raw Lua values to background workers. Capture required input data by value and return plain Go payloads.
+- **Thread Isolation:** No `Runtime` method is goroutine-safe, including read-only getters. Never pass the `Runtime` or raw Lua values to background workers. Capture required input data by value or detached copy and return plain Go payloads. The worker's `context.Context` is safe to observe from the worker; cancellation is cooperative.
 - **Detached Value Copies:** Read `Revision()` and `Focus()`; `Node(id) *Node`, `Model(key) any`, and `State(id) WidgetState` return detached deep copies. Modifying those copies has no effect on the runtime. Use `Patch`, `Replace`, `SetTheme`, and `SetFocus` for updates.
-- **Worker Management:** `StartTask(action, work)` starts a Go worker with a cancellable context (maximum 32 concurrent pending tasks). The owner reads `TaskResults()` and calls `HandleTask(result)` to invoke the Lua action. `CancelTask(id)` discards pending results.
+- **Worker Management:** `StartTask(action, work)` validates an existing Lua action and starts a Go worker with a cancellable context (maximum 32 pending tasks, including completions not yet handled). The owner reads `TaskResults()` and calls `HandleTask(result)` to invoke the Lua action. `CancelTask(id)` cancels context and discards pending results; it does not wait for the worker. `HandleTask` ignores cancelled, stale and foreign results. Workers from an old runtime are not transferred during reload.
 - **Task Results Channel:** `TaskResults()` is `nil` before the first task is launched. Its channel is not closed by `Close`; do not `range` over it waiting for shutdown. `Close` signals context cancellation and returns without waiting to join workers.
 - **Supported Payload Types:** Workers must return supported Go types:
   - `nil`, `string`, `bool`
@@ -216,7 +238,7 @@ func main() {
 - **Text Efficiency:** Text painting stops immediately after reaching the viewport boundary.
 - **Measurement Cache:** Layout caches intrinsic measurements per layout pass. Suggestions skip text scanning when unavailable.
 - **Textarea Indexing:** Textarea reuses an internal grapheme/position index, rebuilding only on edits or container width changes, painting only visible rows.
-- **Zero Idle Overhead:** No separate framebuffer, perpetual FPS loop, or continuous compositor thread. The process is completely event-driven and idle CPU is 0.00%.
+- **Idle Scheduling:** No perpetual FPS loop or continuous compositor thread. The 16ms animation ticker runs only while `NeedsTick()` is true (including a blinking editor cursor). File-backed apps poll metadata every 150ms for reload. Idle CPU depends on the UI and environment; no universal 0.00% claim is made.
 
 ### Automated Benchmarks & Hot-Path Latency
 
