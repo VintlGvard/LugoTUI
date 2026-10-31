@@ -1,6 +1,6 @@
 # CLI installation
 
-Use [v0.1.1 release assets](https://github.com/VintlGvard/LugoTUI/releases/tag/v0.1.1). Choose `linux`, `macos` or `windows`, then `amd64` (x86-64) or `arm64` (ARM64). Unix archives are `lugotui_v0.1.1_<os>_<arch>.tar.gz`; Windows archives are `lugotui_v0.1.1_windows_<arch>.zip`. Also download `SHA256SUMS.txt`.
+Use [v0.1.2 release assets](https://github.com/VintlGvard/LugoTUI/releases/tag/v0.1.2). Choose `linux`, `macos` or `windows`, then `amd64` (x86-64) or `arm64` (ARM64). Unix archives are `lugotui_v0.1.2_<os>_<arch>.tar.gz`; Windows archives are `lugotui_v0.1.2_windows_<arch>.zip`. Also download `SHA256SUMS.txt`.
 
 ## Verify before running
 
@@ -8,13 +8,13 @@ Compare your archive's hash with its exact filename entry in `SHA256SUMS.txt`:
 
 ```sh
 # Linux
-sha256sum lugotui_v0.1.1_linux_amd64.tar.gz
+sha256sum lugotui_v0.1.2_linux_amd64.tar.gz
 # macOS
-shasum -a 256 lugotui_v0.1.1_macos_arm64.tar.gz
+shasum -a 256 lugotui_v0.1.2_macos_arm64.tar.gz
 ```
 
 ```powershell
-Get-FileHash .\lugotui_v0.1.1_windows_amd64.zip -Algorithm SHA256
+Get-FileHash .\lugotui_v0.1.2_windows_amd64.zip -Algorithm SHA256
 ```
 
 A matching hash detects corruption; a checksum downloaded from the same release is not an independent signature or proof of publisher identity. Do not execute a mismatching archive.
@@ -25,7 +25,7 @@ From the directory containing the downloaded archive:
 
 ```sh
 mkdir -p lugotui-bin
-tar -xzf lugotui_v0.1.1_linux_amd64.tar.gz --strip-components=1 -C lugotui-bin
+tar -xzf lugotui_v0.1.2_linux_amd64.tar.gz --strip-components=1 -C lugotui-bin
 mkdir -p "$HOME/.local/bin"
 install -m 755 ./lugotui-bin/lugotui "$HOME/.local/bin/lugotui"
 export PATH="$HOME/.local/bin:$PATH"
@@ -37,7 +37,7 @@ Persist that `PATH` setting in your shell profile if needed. Substitute `arm64` 
 
 ```sh
 mkdir -p lugotui-bin
-tar -xzf lugotui_v0.1.1_macos_arm64.tar.gz --strip-components=1 -C lugotui-bin
+tar -xzf lugotui_v0.1.2_macos_arm64.tar.gz --strip-components=1 -C lugotui-bin
 mkdir -p "$HOME/.local/bin"
 install -m 755 ./lugotui-bin/lugotui "$HOME/.local/bin/lugotui"
 export PATH="$HOME/.local/bin:$PATH"
@@ -48,10 +48,10 @@ Persist `PATH` in your shell profile (for example `~/.zprofile` with zsh). Intel
 ## Windows PowerShell
 
 ```powershell
-Expand-Archive .\lugotui_v0.1.1_windows_amd64.zip -DestinationPath .\lugotui-bin
+Expand-Archive .\lugotui_v0.1.2_windows_amd64.zip -DestinationPath .\lugotui-bin
 $bin = Join-Path $env:LOCALAPPDATA 'LugoTUI\bin'
 New-Item -ItemType Directory -Force $bin | Out-Null
-Copy-Item .\lugotui-bin\lugotui_v0.1.1_windows_amd64\lugotui.exe (Join-Path $bin 'lugotui.exe')
+Copy-Item .\lugotui-bin\lugotui_v0.1.2_windows_amd64\lugotui.exe (Join-Path $bin 'lugotui.exe')
 $env:Path = "$bin;$env:Path"
 ```
 
@@ -77,7 +77,7 @@ PowerShell accepts `lugotui --app C:\path\to\app.lua`. A relative `--app` path i
 Requires Go 1.26.0+:
 
 ```sh
-go install github.com/VintlGvard/LugoTUI/cmd/lugotui@v0.1.1
+go install github.com/VintlGvard/LugoTUI/cmd/lugotui@v0.1.2
 go env GOBIN GOPATH
 ```
 
@@ -85,4 +85,4 @@ Add `GOBIN` to `PATH`, or the `bin` subdirectory of `GOPATH` when `GOBIN` is emp
 
 ## Verification scope
 
-Public module resolution, pkg.go.dev access and anonymous release download were checked for `v0.1.1`. Archive availability alone does not verify a terminal, PATH setup or OS. macOS/Windows installation and terminal smoke tests need native verification; do not infer them from Linux checks. Sandbox additionally requires Linux, bubblewrap and prlimit; see [sandbox requirements](sandbox.md).
+Public module resolution, pkg.go.dev access and anonymous release download were checked for `v0.1.2`. Archive availability alone does not verify a terminal, PATH setup or OS. macOS/Windows installation and terminal smoke tests need native verification; do not infer them from Linux checks. Sandbox additionally requires Linux, bubblewrap and prlimit; see [sandbox requirements](sandbox.md).

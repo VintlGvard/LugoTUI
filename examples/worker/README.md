@@ -27,7 +27,7 @@ cancellation, shutdown cancellation, snapshots, and IPC response validation.
 The default `AppFile` is `examples/worker/app.lua`, relative to the current
 working directory. When copying the Go/Lua files into your own application,
 set `--app app.lua` or change that default; initialize your module and pin
-`github.com/VintlGvard/LugoTUI/tui@v0.1.1` as in the main README.
+`github.com/VintlGvard/LugoTUI/tui@v0.1.2` as in the main README.
 
 `OnEvent` executes synchronously on the runtime owner. It copies and validates
 input before `StartTask`; workers never access the runtime. A normal returned

@@ -167,7 +167,11 @@ func place(n *Node, r, clip Rect) {
 			if remaining > 0 && vals[i] < size(c, "max_"+axis, main, 1e6) {
 				weights[i] = num(c, "grow", 0)
 			} else if remaining < 0 && vals[i] > size(c, "min_"+axis, main, 0) {
-				weights[i] = num(c, "shrink", 1) * bases[i]
+				defShrink := 1.0
+				if c.Type == "button" {
+					defShrink = 0.0
+				}
+				weights[i] = num(c, "shrink", defShrink) * bases[i]
 			}
 			weight += weights[i]
 		}
@@ -268,12 +272,16 @@ func place(n *Node, r, clip Rect) {
 }
 
 func measureText(n *Node) string {
+	text := plainText(n)
 	if n.layoutBound {
 		if _, spans := n.Props["spans"].([]any); !spans {
-			return n.layoutText
+			text = n.layoutText
 		}
 	}
-	return plainText(n)
+	if n.Type == "button" {
+		return "[ " + text + " ]"
+	}
+	return text
 }
 
 func invalidateMeasure(n *Node) {

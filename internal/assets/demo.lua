@@ -421,7 +421,7 @@ local app = {
    ui.row {height = 1, shrink = 0, gap = 1, bg = dark_surface,
     ui.text {text = ' ❯', width = 3, fg = amber, bold = true},
     ui.input {id = 'prompt', bind = 'draft', placeholder = 'Type a message or command (or press Ctrl+P)...', grow = 1, on_submit = 'send', bg = surface},
-    ui.button {id = 'send_button', text = ' Send ', width = 8, on_click = 'send_current', bg = cyan, fg = navy}},
+    ui.button {id = 'send_button', text = 'Send', width = 8, on_click = 'send_current', bg = cyan, fg = navy}},
    ui.row {height = 1, shrink = 0, bg = '#090d16',
     ui.text {id = 'status', height = 1, shrink = 0, text = 'Tab focus · Ctrl+P commands · F1 help · F2 scratchpad · F5 reload · Ctrl+Q quit', fg = muted, grow = 1}}},
   ui.overlay {id = 'palette', hidden = true, modal = true, position = 'absolute', left = '10%', top = '10%', width = '80%', height = '70%', z_index = 10, border = true, padding = 1, title = ' Commands / Esc close ', bg = surface,

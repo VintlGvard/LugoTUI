@@ -197,7 +197,30 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 		case "text", "button":
 			text := r.text(n)
 			if n.Type == "button" {
-				text = "[ " + text + " ]"
+				if cr.W > 0 {
+					w := textWidth(text)
+					if cr.W >= w+4 {
+						text = "[ " + text + " ]"
+					} else if cr.W >= 4 {
+						inner := ""
+						curW := 0
+						for _, g := range graphemes(text) {
+							gw := textWidth(g)
+							if curW+gw > cr.W-4 {
+								break
+							}
+							inner += g
+							curW += gw
+						}
+						text = "[ " + inner + " ]"
+					} else if cr.W >= 2 {
+						text = "[]"
+					} else {
+						text = "["
+					}
+				} else {
+					text = "[ " + text + " ]"
+				}
 			}
 			paintText(s, n, text, st, cr, clip)
 		case "list":

@@ -107,3 +107,62 @@ func TestThemeDefaultsOverridesAndReload(t *testing.T) {
 	check(0, tui.DefaultTheme().FocusForeground, "navy")
 	check(1, tui.DefaultTheme().Foreground, "navy")
 }
+
+func TestButtonLayoutAndTruncation(t *testing.T) {
+	const source = `return {view=ui.row{ui.button{id='btn',text='Save'}}}`
+	r, err := tui.Load(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	s := tcell.NewSimulationScreen("UTF-8")
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Fini()
+
+	s.SetSize(20, 1)
+	r.Draw(s, "")
+	if got := r.Node("btn").Rect.W; got != 8 {
+		t.Fatalf("expected button width 8, got %d", got)
+	}
+	if !strings.HasPrefix(screenContent(s), "[ Save ]") {
+		t.Fatalf("expected '[ Save ]', got %q", screenContent(s))
+	}
+
+	if err := r.Patch("btn", map[string]any{"width": float64(6)}); err != nil {
+		t.Fatal(err)
+	}
+	r.Draw(s, "")
+	if !strings.HasPrefix(screenContent(s), "[ Sa ]") {
+		t.Fatalf("expected '[ Sa ]', got %q", screenContent(s))
+	}
+
+	if err := r.Patch("btn", map[string]any{"width": float64(3)}); err != nil {
+		t.Fatal(err)
+	}
+	r.Draw(s, "")
+	if !strings.HasPrefix(screenContent(s), "[]") {
+		t.Fatalf("expected '[]', got %q", screenContent(s))
+	}
+
+	r2, err := tui.Load(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r2.Close()
+	s.SetSize(4, 1)
+	r2.Draw(s, "")
+	if r2.Node("btn").Rect.W != 8 {
+		t.Fatalf("expected button width to remain 8 without shrink, got %d", r2.Node("btn").Rect.W)
+	}
+
+	if err := r2.Patch("btn", map[string]any{"shrink": float64(1)}); err != nil {
+		t.Fatal(err)
+	}
+	r2.Draw(s, "")
+	if r2.Node("btn").Rect.W > 4 {
+		t.Fatalf("expected button to shrink to <= 4, got %d", r2.Node("btn").Rect.W)
+	}
+}
+
