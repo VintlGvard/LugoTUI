@@ -31,7 +31,7 @@ Stop recompiling your Go binary every time you tweak a margin or color. **LugoTU
 Requires **Go 1.26+**:
 
 ```sh
-go get github.com/VintlGvard/LugoTUI/tui@v0.1.2
+go get github.com/VintlGvard/LugoTUI/tui@latest
 ```
 
 Define declarative UI in `app.lua`:
@@ -88,7 +88,7 @@ Run Lua applications without writing Go:
 
 ```sh
 # Via go install (Go 1.26+)
-go install github.com/VintlGvard/LugoTUI/cmd/lugotui@v0.1.2
+go install github.com/VintlGvard/LugoTUI/cmd/lugotui@latest
 
 lugotui --app app.lua          # Run UI
 lugotui --app app.lua --check  # Headless validation

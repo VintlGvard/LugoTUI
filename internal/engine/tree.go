@@ -246,13 +246,36 @@ func validateTree(root *Node) (map[string]*Node, error) {
 				if v != "absolute" && v != "relative" {
 					return errors.New("invalid position")
 				}
-			case "text", "title", "bind", "source", "on_submit", "on_change", "on_select", "on_click", "fg", "bg", "wrap":
+			case "text", "title", "bind", "source", "on_submit", "on_change", "on_select", "on_click", "on_key", "fg", "bg", "wrap", "nav_up", "nav_down", "nav_left", "nav_right":
 				if _, ok := v.(string); !ok {
 					return fmt.Errorf("%s must be string", k)
 				}
-			case "border", "hidden", "disabled", "bold", "modal":
+			case "border", "hidden", "disabled", "bold", "modal", "spatial_nav":
 				if _, ok := v.(bool); !ok {
 					return fmt.Errorf("%s must be boolean", k)
+				}
+			case "nav":
+				m, ok := v.(map[string]any)
+				if !ok {
+					return errors.New("nav must be object")
+				}
+				for dir, target := range m {
+					if dir != "up" && dir != "down" && dir != "left" && dir != "right" {
+						return fmt.Errorf("invalid nav direction %q", dir)
+					}
+					if _, ok := target.(string); !ok {
+						return fmt.Errorf("nav.%s must be string", dir)
+					}
+				}
+			case "keymap":
+				m, ok := v.(map[string]any)
+				if !ok {
+					return errors.New("keymap must be object")
+				}
+				for keyName, act := range m {
+					if _, ok := act.(string); !ok {
+						return fmt.Errorf("keymap[%q] action must be string", keyName)
+					}
 				}
 			case "z_index":
 				if f, ok := v.(float64); !ok || !finite(f) || math.Abs(f) > 1e6 {
@@ -334,10 +357,19 @@ func ValidateModel(data map[string]any) error {
 
 func (r *Runtime) validateActions() error {
 	for n := range ordered(r.Root) {
-		for _, key := range []string{"on_click", "on_select", "on_submit", "on_change", "on_navigate", "on_timeout"} {
+		for _, key := range []string{"on_click", "on_select", "on_submit", "on_change", "on_navigate", "on_timeout", "on_key"} {
 			if action := str(n, key, ""); action != "" {
 				if r.actions == nil || r.actions.RawGetString(action).Type() != lua.LTFunction {
 					return &nodeError{Node: n, Property: key, Err: errors.New("unknown action: " + action)}
+				}
+			}
+		}
+		if km, ok := n.Props["keymap"].(map[string]any); ok {
+			for key, action := range km {
+				if s, ok := action.(string); ok && s != "" {
+					if r.actions == nil || r.actions.RawGetString(s).Type() != lua.LTFunction {
+						return &nodeError{Node: n, Property: "keymap", Err: fmt.Errorf("unknown action: %s (key %q)", s, key)}
+					}
 				}
 			}
 		}

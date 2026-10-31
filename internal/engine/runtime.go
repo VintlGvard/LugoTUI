@@ -23,6 +23,7 @@ type Runtime struct {
 	AnimationRevision              uint64
 	actions                        *lua.LTable
 	keymap                         map[string]string
+	spatialNav                     bool
 	Staged                         []Operation
 	Events                         []HostEvent
 	modalID, PreviousFocus, dragID string
@@ -141,6 +142,26 @@ func (r *Runtime) SetFocus(id string) error {
 	}
 	r.Focus = id
 	return nil
+}
+
+func (r *Runtime) FocusDirection(dir string) bool {
+	return r.focusDirection(dir)
+}
+
+func (r *Runtime) FocusNext() string {
+	next := r.nextFocusable(false)
+	if next != "" {
+		r.Focus = next
+	}
+	return next
+}
+
+func (r *Runtime) FocusPrev() string {
+	prev := r.nextFocusable(true)
+	if prev != "" {
+		r.Focus = prev
+	}
+	return prev
 }
 
 func (r *Runtime) Patch(id string, props map[string]any) error {

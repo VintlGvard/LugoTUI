@@ -90,6 +90,12 @@ func (r *Runtime) Focus() string { return r.runtime.Focus }
 
 func (r *Runtime) SetFocus(id string) error { return r.runtime.SetFocus(id) }
 
+func (r *Runtime) FocusDirection(dir string) bool { return r.runtime.FocusDirection(dir) }
+
+func (r *Runtime) FocusNext() string { return r.runtime.FocusNext() }
+
+func (r *Runtime) FocusPrev() string { return r.runtime.FocusPrev() }
+
 func (r *Runtime) Theme() Theme { return r.runtime.Theme }
 
 func (r *Runtime) SetTheme(theme Theme) { r.runtime.Theme = theme }

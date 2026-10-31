@@ -79,6 +79,10 @@ return {
 - `ui.get(key)`: Read a value from the explicit model.
 - `ui.set(key, value)`: Write a value to the explicit model.
 - `ui.focus(id)`: Request keyboard focus for node `id`.
+- `ui.focused()`: Return the ID of the currently focused node, or `nil`.
+- `ui.focus_direction(dir)`: Move focus in direction `'up'`, `'down'`, `'left'`, or `'right'` using explicit and spatial navigation. Returns target ID or `nil`.
+- `ui.focus_next()`: Advance focus forward in document order (equivalent to Tab). Returns target ID or `nil`.
+- `ui.focus_prev()`: Retreat focus backward in document order (equivalent to Shift+Tab). Returns target ID or `nil`.
 - `host.dispatch(action, payload)`: Queue a host event to Go; no external side effects during candidate initialization.
 
 ### Action Transactions & Reload Semantics
@@ -159,6 +163,17 @@ Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event l
 - **ID stability:** Stateful widgets require stable `id` properties across reloads.
 - **Indexing convention:** Collections use **1-based** `index` in selection callbacks; paginator `page` is **0-based**.
 - **Time advancement:** Embedders must call `Tick(time.Time)` from the runtime owner loop while `NeedsTick()` is true. The managed runner handles ticks automatically; `Draw` alone does not advance time.
+- **Directional Navigation:**
+  - `nav_up`, `nav_down`, `nav_left`, `nav_right`: Explicit target node `id` for arrow key navigation (or `'none'` to disable navigation in that direction).
+  - `nav = { up = '...', down = '...', left = '...', right = '...' }`: Structured table alternative.
+- **2D Spatial Navigation:**
+  - Buttons automatically navigate to adjacent widgets using 2D edge distance projection on all arrow keys.
+  - `spatial_nav = true`: Opt-in on any node or globally in the root spec table (`return { spatial_nav = true, ... }`).
+  - On `ui.input`: `spatial_nav = true` allows `Up` and `Down` arrow keys to jump to vertically adjacent widgets while preserving cursor movement on `Left` and `Right`.
+  - On `ui.table` and `ui.list`: `spatial_nav = true` allows `Left` and `Right` arrow keys to jump to adjacent panels while preserving row selection on `Up` and `Down`.
+- **Node-level Keymaps & Interception:**
+  - `keymap = { ['Space'] = 'action', ['i'] = 'install' }`: Widget-specific keyboard shortcuts active while the widget has focus.
+  - `on_key = 'action'`: Intercepts keystrokes on the focused node, passing `{ id, key, rune, ctrl, alt, shift, focus }` in the event payload.
 - **Default Keybindings:**
   - `Tab` / `Shift+Tab`: Move focus forward / backward.
   - `Ctrl+P`: Command palette.

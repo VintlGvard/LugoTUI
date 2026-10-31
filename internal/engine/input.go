@@ -24,7 +24,7 @@ func sortedChildren(n *Node) []*Node {
 	return children
 }
 
-func (r *Runtime) focusStep(back bool) {
+func (r *Runtime) nextFocusable(back bool) string {
 	nodes := []*Node{}
 	r.ReconcileFocus()
 	for n := range visibleNodes(r.scope()) {
@@ -33,11 +33,15 @@ func (r *Runtime) focusStep(back bool) {
 		}
 	}
 	if len(nodes) == 0 {
-		return
+		return ""
+	}
+	current := r.Focus
+	if r.stagedFocus != nil {
+		current = *r.stagedFocus
 	}
 	index := 0
 	for i, n := range nodes {
-		if n.ID == r.Focus {
+		if n.ID == current {
 			index = i
 			break
 		}
@@ -46,7 +50,139 @@ func (r *Runtime) focusStep(back bool) {
 	if back {
 		delta = -1
 	}
-	r.Focus = nodes[(index+delta+len(nodes))%len(nodes)].ID
+	return nodes[(index+delta+len(nodes))%len(nodes)].ID
+}
+
+func (r *Runtime) focusStep(back bool) {
+	if next := r.nextFocusable(back); next != "" {
+		r.Focus = next
+	}
+}
+
+func explicitNavTarget(n *Node, dir string) (string, bool) {
+	if s := str(n, "nav_"+dir, ""); s != "" {
+		if s == "none" || s == "false" {
+			return "", true
+		}
+		return s, false
+	}
+	if navMap, ok := n.Props["nav"].(map[string]any); ok {
+		if s, ok := navMap[dir].(string); ok && s != "" {
+			if s == "none" || s == "false" {
+				return "", true
+			}
+			return s, false
+		}
+	}
+	return "", false
+}
+
+func (r *Runtime) findDirectionNode(curr *Node, dir string) *Node {
+	if curr == nil {
+		return nil
+	}
+	targetID, disabled := explicitNavTarget(curr, dir)
+	if disabled {
+		return nil
+	}
+	if targetID != "" {
+		for n := range visibleNodes(r.scope()) {
+			if n.ID == targetID && focusable(n) && n.Clip.W > 0 && n.Clip.H > 0 {
+				return n
+			}
+		}
+		return nil
+	}
+
+	c := curr.Clip
+	cx1, cy1, cx2, cy2 := float64(c.X), float64(c.Y), float64(c.X+c.W), float64(c.Y+c.H)
+	cxMid, cyMid := (cx1+cx2)*0.5, (cy1+cy2)*0.5
+	var best *Node
+	bestScore := math.MaxFloat64
+	for n := range visibleNodes(r.scope()) {
+		if n.ID == curr.ID || !focusable(n) || n.Clip.W <= 0 || n.Clip.H <= 0 {
+			continue
+		}
+		nc := n.Clip
+		nx1, ny1, nx2, ny2 := float64(nc.X), float64(nc.Y), float64(nc.X+nc.W), float64(nc.Y+nc.H)
+		nxMid, nyMid := (nx1+nx2)*0.5, (ny1+ny2)*0.5
+		var primary, secondary, overlap float64
+		valid := false
+		switch dir {
+		case "up":
+			if ny2 <= cy1 || (nyMid < cyMid && ny1 < cy1) {
+				valid, primary = true, cy1-ny2
+				if primary < 0 {
+					primary = cyMid - nyMid
+				}
+				overlap = min(cx2, nx2) - max(cx1, nx1)
+				if overlap <= 0 {
+					secondary = max(0, max(cx1-nx2, nx1-cx2))
+				}
+				secondary += math.Abs(cxMid-nxMid) * 0.2
+			}
+		case "down":
+			if ny1 >= cy2 || (nyMid > cyMid && ny2 > cy2) {
+				valid, primary = true, ny1-cy2
+				if primary < 0 {
+					primary = nyMid - cyMid
+				}
+				overlap = min(cx2, nx2) - max(cx1, nx1)
+				if overlap <= 0 {
+					secondary = max(0, max(cx1-nx2, nx1-cx2))
+				}
+				secondary += math.Abs(cxMid-nxMid) * 0.2
+			}
+		case "left":
+			if nx2 <= cx1 || (nxMid < cxMid && nx1 < cx1) {
+				valid, primary = true, cx1-nx2
+				if primary < 0 {
+					primary = cxMid - nxMid
+				}
+				overlap = min(cy2, ny2) - max(cy1, ny1)
+				if overlap <= 0 {
+					secondary = max(0, max(cy1-ny2, ny1-cy2))
+				}
+				secondary += math.Abs(cyMid-nyMid) * 0.2
+			}
+		case "right":
+			if nx1 >= cx2 || (nxMid > cxMid && nx2 > cx2) {
+				valid, primary = true, nx1-cx2
+				if primary < 0 {
+					primary = nxMid - cxMid
+				}
+				overlap = min(cy2, ny2) - max(cy1, ny1)
+				if overlap <= 0 {
+					secondary = max(0, max(cy1-ny2, ny1-cy2))
+				}
+				secondary += math.Abs(cyMid-nyMid) * 0.2
+			}
+		}
+		if valid && primary >= 0 {
+			score := primary + secondary*2.5
+			if overlap > 0 {
+				score *= 0.6
+			}
+			if score < bestScore {
+				bestScore, best = score, n
+			}
+		}
+	}
+	return best
+}
+
+func (r *Runtime) focusDirection(dir string) bool {
+	r.ReconcileFocus()
+	curr := r.Nodes[r.Focus]
+	if curr == nil {
+		return false
+	}
+	target := r.findDirectionNode(curr, dir)
+	if target != nil && target.ID != curr.ID {
+		r.Focus = target.ID
+		return true
+	}
+	return false
 }
 
 func visibleNodes(n *Node) iter.Seq[*Node] {
@@ -109,11 +245,74 @@ func (r *Runtime) ReconcileFocus() {
 	}
 }
 
+func keyAlias(s string) tcell.Key {
+	switch strings.ToLower(s) {
+	case "enter", "return":
+		return tcell.KeyEnter
+	case "esc", "escape":
+		return tcell.KeyEscape
+	case "tab":
+		return tcell.KeyTab
+	case "backspace":
+		return tcell.KeyBackspace2
+	case "up":
+		return tcell.KeyUp
+	case "down":
+		return tcell.KeyDown
+	case "left":
+		return tcell.KeyLeft
+	case "right":
+		return tcell.KeyRight
+	case "home":
+		return tcell.KeyHome
+	case "end":
+		return tcell.KeyEnd
+	case "pgup":
+		return tcell.KeyPgUp
+	case "pgdown":
+		return tcell.KeyPgDn
+	case "delete":
+		return tcell.KeyDelete
+	case "insert":
+		return tcell.KeyInsert
+	default:
+		return tcell.KeyRune
+	}
+}
+
+func keyMatches(pattern string, e *tcell.EventKey) bool {
+	name := e.Name()
+	if pattern == name || (strings.ContainsRune(name, '-') && pattern == strings.ReplaceAll(name, "-", "+")) {
+		return true
+	}
+	if e.Key() == tcell.KeyRune && (e.Modifiers() == tcell.ModNone || e.Modifiers() == tcell.ModShift) {
+		r := e.Rune()
+		if (pattern == "Space" || pattern == "space") && r == ' ' {
+			return true
+		}
+		if len(pattern) == 1 && pattern[0] == byte(r) && r < 128 {
+			return true
+		}
+		if pattern == string(r) {
+			return true
+		}
+	}
+	if e.Modifiers() == tcell.ModNone {
+		if k := keyAlias(pattern); k != tcell.KeyRune && k == e.Key() {
+			return true
+		}
+	}
+	return e.Key() != tcell.KeyRune && strings.EqualFold(strings.ReplaceAll(pattern, "+", "-"), strings.ReplaceAll(name, "+", "-"))
+}
+
 func (r *Runtime) Key(e *tcell.EventKey) error {
 	r.ReconcileFocus()
-	action := r.keymap[e.Name()]
-	if action == "" {
-		action = r.keymap[strings.ReplaceAll(e.Name(), "-", "+")]
+	var action string
+	for pattern, act := range r.keymap {
+		if act != "" && keyMatches(pattern, e) {
+			action = act
+			break
+		}
 	}
 	if action != "" {
 		return r.Action(action, map[string]any{"key": e.Name(), "focus": r.Focus})
@@ -122,6 +321,40 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 		n := r.scope()
 		r.Staged = []Operation{{ID: n.ID, Props: map[string]any{"hidden": true}}}
 		return r.Commit()
+	}
+	n := r.Nodes[r.Focus]
+	if n != nil {
+		if km, ok := n.Props["keymap"].(map[string]any); ok {
+			var act string
+			for pattern, actionVal := range km {
+				if s, ok := actionVal.(string); ok && s != "" && keyMatches(pattern, e) {
+					act = s
+					break
+				}
+			}
+			if act != "" {
+				return r.Action(act, map[string]any{
+					"id":    n.ID,
+					"key":   e.Name(),
+					"focus": r.Focus,
+					"rune":  string(e.Rune()),
+					"ctrl":  e.Modifiers()&tcell.ModCtrl != 0,
+					"alt":   e.Modifiers()&tcell.ModAlt != 0,
+					"shift": e.Modifiers()&tcell.ModShift != 0,
+				})
+			}
+		}
+		if onKey := str(n, "on_key", ""); onKey != "" {
+			return r.Action(onKey, map[string]any{
+				"id":    n.ID,
+				"key":   e.Name(),
+				"focus": r.Focus,
+				"rune":  string(e.Rune()),
+				"ctrl":  e.Modifiers()&tcell.ModCtrl != 0,
+				"alt":   e.Modifiers()&tcell.ModAlt != 0,
+				"shift": e.Modifiers()&tcell.ModShift != 0,
+			})
+		}
 	}
 	if handled, err := r.bindingKey(e); handled || err != nil {
 		return err
@@ -133,9 +366,49 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 		r.focusStep(e.Key() == tcell.KeyBacktab)
 		return nil
 	}
-	n := r.Nodes[r.Focus]
 	if n == nil {
 		return nil
+	}
+	var dir string
+	switch e.Key() {
+	case tcell.KeyUp:
+		dir = "up"
+	case tcell.KeyDown:
+		dir = "down"
+	case tcell.KeyLeft:
+		dir = "left"
+	case tcell.KeyRight:
+		dir = "right"
+	}
+	if dir != "" {
+		if target, disabled := explicitNavTarget(n, dir); target != "" || disabled {
+			if disabled {
+				return nil
+			}
+			if r.focusDirection(dir) {
+				return nil
+			}
+		}
+		if n.Type == "button" {
+			if r.focusDirection(dir) {
+				return nil
+			}
+			return nil
+		}
+		if n.Type == "input" && (dir == "up" || dir == "down") {
+			if flag(n, "spatial_nav") || r.spatialNav {
+				if r.focusDirection(dir) {
+					return nil
+				}
+			}
+		}
+		if (n.Type == "table" || n.Type == "list" || n.Type == "scroll" || n.Type == "viewport" || n.Type == "tree") && (dir == "left" || dir == "right") {
+			if flag(n, "spatial_nav") || r.spatialNav {
+				if r.focusDirection(dir) {
+					return nil
+				}
+			}
+		}
 	}
 	s := r.State[n.ID]
 	if handled, err := r.keyCollection(n, e); handled || err != nil {

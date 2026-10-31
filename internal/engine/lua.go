@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	lua "github.com/yuin/gopher-lua"
 	"math"
+	"strings"
 	"time"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 func loadRuntime(source string, old *Runtime) (*Runtime, error) {
@@ -87,6 +89,58 @@ func loadRuntime(source string, old *Runtime) (*Runtime, error) {
 		id := L.CheckString(1)
 		r.stagedFocus = &id
 		return 0
+	}))
+	L.SetField(ui, "focused", L.NewFunction(func(L *lua.LState) int {
+		focus := r.Focus
+		if r.stagedFocus != nil {
+			focus = *r.stagedFocus
+		}
+		if focus == "" {
+			L.Push(lua.LNil)
+		} else {
+			L.Push(lua.LString(focus))
+		}
+		return 1
+	}))
+	L.SetField(ui, "focus_direction", L.NewFunction(func(L *lua.LState) int {
+		dir := strings.ToLower(L.CheckString(1))
+		r.ReconcileFocus()
+		curr := r.Nodes[r.Focus]
+		if r.stagedFocus != nil {
+			curr = r.Nodes[*r.stagedFocus]
+		}
+		if curr == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+		target := r.findDirectionNode(curr, dir)
+		if target != nil {
+			r.stagedFocus = &target.ID
+			L.Push(lua.LString(target.ID))
+			return 1
+		}
+		L.Push(lua.LNil)
+		return 1
+	}))
+	L.SetField(ui, "focus_next", L.NewFunction(func(L *lua.LState) int {
+		target := r.nextFocusable(false)
+		if target != "" {
+			r.stagedFocus = &target
+			L.Push(lua.LString(target))
+			return 1
+		}
+		L.Push(lua.LNil)
+		return 1
+	}))
+	L.SetField(ui, "focus_prev", L.NewFunction(func(L *lua.LState) int {
+		target := r.nextFocusable(true)
+		if target != "" {
+			r.stagedFocus = &target
+			L.Push(lua.LString(target))
+			return 1
+		}
+		L.Push(lua.LNil)
+		return 1
 	}))
 	host := L.NewTable()
 	L.SetField(host, "dispatch", L.NewFunction(func(L *lua.LState) int {
@@ -188,6 +242,10 @@ func loadRuntime(source string, old *Runtime) (*Runtime, error) {
 	if old != nil {
 		r.modalID = old.modalID
 		r.PreviousFocus = old.PreviousFocus
+		r.spatialNav = old.spatialNav
+	}
+	if sn := spec.RawGetString("spatial_nav"); sn.Type() == lua.LTBool {
+		r.spatialNav = bool(sn.(lua.LBool))
 	}
 	if len(r.Staged) > 0 || r.stagedFocus != nil {
 		return nil, errors.New("UI mutation during initialization forbidden")
