@@ -130,9 +130,9 @@ Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event l
 - `ui.overlay`: Floating container placed above standard layout flow.
 
 ### Collections
-- **`ui.table`:** Data table with `columns = {{ title = 'Name', width = 20 }}` and `rows = {{ 'Example' }}`. Supports horizontal scrolling and Vim keys (`j` / `k` / `g` / `G`).
-- **`ui.tree`:** Hierarchical tree widget with nested `{ id, text, children, expanded }` items and Vim/arrow key navigation.
-- **`ui.list`:** List view with optional fuzzy filtering (`filterable = true`, activate with `/`), item descriptions, Vim keys, and pagination (`page_size`, `height`).
+- **`ui.table`:** Data table with `columns = {{ title = 'Name', width = 20, align = 'left'|'center'|'right' }}` and `rows = {{ 'Example' }}` or cell objects `{{ { text = '42', align = 'right', fg = 'green', bg = 'black', bold = true } }}`. Supports horizontal scrolling, Vim keys (`j` / `k` / `g` / `G`), `on_select` (row activation), and `on_change` (row selection change).
+- **`ui.tree`:** Hierarchical tree widget with nested `{ id, text, children, expanded }` items, Vim/arrow key navigation, `on_select`, and `on_change`.
+- **`ui.list`:** List view with optional fuzzy filtering (`filterable = true`, activate with `/`), item descriptions, Vim keys, pagination (`page_size`, `height`), `on_select`, and `on_change`.
 - **`ui.viewport`:** Scrollable text view with Vim bindings (`j` / `k`, `d` / `u`, `g` / `G`, `h` / `l`). Supports `soft_wrap` and `show_line_numbers`.
 
 ### Motion & Indicators
@@ -162,6 +162,10 @@ Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event l
 
 - **ID stability:** Stateful widgets require stable `id` properties across reloads.
 - **Indexing convention:** Collections use **1-based** `index` in selection callbacks; paginator `page` is **0-based**.
+- **Collection callbacks:**
+  - `on_select`: Triggered when an item or row is activated (e.g. `Enter` key or direct mouse click). Payload: `{ id = "<node_id>", index = <1-based index>, value = <item/row value> }`.
+  - `on_change`: Triggered when active item/row selection changes via keyboard arrows, Vim keys (`j`/`k`/`g`/`G`), or mouse click/wheel. Payload: `{ id = "<node_id>", index = <1-based index>, value = <item/row value> }`.
+  - In `ui.list` with `filterable = true`, filter query changes trigger `on_change` with `{ id = "<node_id>", query = "<query>", value = "<query>" }` (distinguished by the presence of `query` rather than `index`).
 - **Time advancement:** Embedders must call `Tick(time.Time)` from the runtime owner loop while `NeedsTick()` is true. The managed runner handles ticks automatically; `Draw` alone does not advance time.
 - **Directional Navigation:**
   - `nav_up`, `nav_down`, `nav_left`, `nav_right`: Explicit target node `id` for arrow key navigation (or `'none'` to disable navigation in that direction).

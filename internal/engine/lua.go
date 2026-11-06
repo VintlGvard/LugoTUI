@@ -11,11 +11,18 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-func loadRuntime(source string, old *Runtime) (*Runtime, error) {
+func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 	if len(source) > maxText {
 		return nil, errors.New("script exceeds 1 MiB")
 	}
-	r := &Runtime{Nodes: map[string]*Node{}, State: map[string]*WidgetState{}, Data: map[string]any{}}
+	if chunkName == "" {
+		if old != nil && old.ChunkName != "" {
+			chunkName = old.ChunkName
+		} else {
+			chunkName = "<string>"
+		}
+	}
+	r := &Runtime{Nodes: map[string]*Node{}, State: map[string]*WidgetState{}, Data: map[string]any{}, ChunkName: chunkName}
 	if old != nil {
 		for k, v := range old.Data {
 			r.Data[k] = v
@@ -52,9 +59,8 @@ func loadRuntime(source string, old *Runtime) (*Runtime, error) {
 		L.Push(L.CheckTable(1))
 		return 1
 	}))
-	L.SetField(ui, "patch", L.NewFunction(func(L *lua.LState) int {
-		id := L.CheckString(1)
-		v, err := luaPlain(L.CheckTable(2), 0)
+	stagePatch := func(id string, tbl *lua.LTable) {
+		v, err := luaPlain(tbl, 0)
 		if err != nil {
 			L.RaiseError("operations[%d] patch %q: %s", len(r.Staged)+1, id, err)
 		}
@@ -71,8 +77,33 @@ func loadRuntime(source string, old *Runtime) (*Runtime, error) {
 		if len(r.Staged) > maxNodes {
 			L.RaiseError("too many operations")
 		}
+	}
+	patchFn := L.NewFunction(func(L *lua.LState) int {
+		if L.GetTop() == 1 {
+			tbl := L.CheckTable(1)
+			var iterErr error
+			tbl.ForEach(func(k, v lua.LValue) {
+				if iterErr != nil {
+					return
+				}
+				propsTbl, ok := v.(*lua.LTable)
+				if !ok {
+					iterErr = fmt.Errorf("operations[%d] batch patch %q: properties must be object", len(r.Staged)+1, k.String())
+					return
+				}
+				stagePatch(k.String(), propsTbl)
+			})
+			if iterErr != nil {
+				L.RaiseError("%s", iterErr)
+			}
+			return 0
+		}
+		id := L.CheckString(1)
+		stagePatch(id, L.CheckTable(2))
 		return 0
-	}))
+	})
+	L.SetField(ui, "patch", patchFn)
+	L.SetField(ui, "patch_all", patchFn)
 	L.SetField(ui, "replace", L.NewFunction(func(L *lua.LState) int {
 		id := L.CheckString(1)
 		tree, err := parseNode(L.CheckTable(2), 0)
@@ -144,14 +175,39 @@ func loadRuntime(source string, old *Runtime) (*Runtime, error) {
 	}))
 	host := L.NewTable()
 	L.SetField(host, "dispatch", L.NewFunction(func(L *lua.LState) int {
-		if len(r.Events) >= 256 {
-			L.RaiseError("host event queue full")
-		}
+		action := L.CheckString(1)
 		v, err := luaPlain(L.Get(2), 0)
 		if err != nil {
 			L.RaiseError("%s", err)
 		}
-		r.Events = append(r.Events, HostEvent{L.CheckString(1), v})
+		replace := false
+		if L.GetTop() >= 3 {
+			if b, ok := L.Get(3).(lua.LBool); ok {
+				replace = bool(b)
+			} else if tbl, ok := L.Get(3).(*lua.LTable); ok {
+				if d := tbl.RawGetString("debounce"); d != lua.LNil && d != lua.LFalse {
+					replace = true
+				} else if rep := tbl.RawGetString("replace"); rep != lua.LNil && rep != lua.LFalse {
+					replace = true
+				}
+			}
+		} else if m, ok := v.(map[string]any); ok {
+			if d, ok := m["debounce"]; ok && d != false && d != nil {
+				replace = true
+			}
+		}
+		if replace {
+			for i := len(r.Events) - 1; i >= 0; i-- {
+				if r.Events[i].Action == action {
+					r.Events[i].Payload = v
+					return 0
+				}
+			}
+		}
+		if len(r.Events) >= 256 {
+			L.RaiseError("host event queue full")
+		}
+		r.Events = append(r.Events, HostEvent{action, v})
 		return 0
 	}))
 	L.SetField(ui, "get", L.NewFunction(func(L *lua.LState) int {
@@ -184,7 +240,7 @@ func loadRuntime(source string, old *Runtime) (*Runtime, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	L.SetContext(ctx)
-	fn, err := L.LoadString(source)
+	fn, err := L.Load(strings.NewReader(source), chunkName)
 	if err != nil {
 		return nil, err
 	}

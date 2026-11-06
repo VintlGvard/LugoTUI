@@ -307,20 +307,29 @@ func keyMatches(pattern string, e *tcell.EventKey) bool {
 
 func (r *Runtime) Key(e *tcell.EventKey) error {
 	r.ReconcileFocus()
+	scope := r.scope()
+	if e.Key() == tcell.KeyEscape && scope != r.Root {
+		r.Staged = []Operation{{ID: scope.ID, Props: map[string]any{"hidden": true}}}
+		return r.Commit()
+	}
 	var action string
-	for pattern, act := range r.keymap {
-		if act != "" && keyMatches(pattern, e) {
-			action = act
-			break
+	if scope == r.Root {
+		for pattern, act := range r.keymap {
+			if act != "" && keyMatches(pattern, e) {
+				action = act
+				break
+			}
+		}
+	} else if scopeKm, ok := scope.Props["keymap"].(map[string]any); ok {
+		for pattern, actionVal := range scopeKm {
+			if s, ok := actionVal.(string); ok && s != "" && keyMatches(pattern, e) {
+				action = s
+				break
+			}
 		}
 	}
 	if action != "" {
 		return r.Action(action, map[string]any{"key": e.Name(), "focus": r.Focus})
-	}
-	if e.Key() == tcell.KeyEscape && r.scope() != r.Root {
-		n := r.scope()
-		r.Staged = []Operation{{ID: n.ID, Props: map[string]any{"hidden": true}}}
-		return r.Commit()
 	}
 	n := r.Nodes[r.Focus]
 	if n != nil {

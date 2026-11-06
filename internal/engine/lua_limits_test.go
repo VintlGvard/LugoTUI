@@ -81,7 +81,7 @@ func TestLuaRuntimeRejectsExpansion(t *testing.T) {
 		`local n={type="box"}; for i=1,30 do n={type="box",n,n} end; return {view=n}`,
 		`local v={}; for i=1,29 do v={v,v} end; ui.set("v",v); return {view={type="box"}}`,
 	} {
-		r, err := loadRuntime(source, nil)
+		r, err := loadRuntime(source, "", nil)
 		if r != nil {
 			r.L.Close()
 		}

@@ -130,7 +130,7 @@ func validateCollection(n *Node) error {
 			if !ok {
 				return fmt.Errorf("table column must be an object")
 			}
-			if err := collectionKeys(m, "title", "width"); err != nil {
+			if err := collectionKeys(m, "title", "width", "align"); err != nil {
 				return err
 			}
 			if _, ok := m["title"].(string); !ok {
@@ -138,6 +138,11 @@ func validateCollection(n *Node) error {
 			}
 			if _, ok := collectionNumber(m["width"]); !ok {
 				return fmt.Errorf("table column width must be a positive integer")
+			}
+			if a, ok := m["align"]; ok {
+				if as, ok := a.(string); !ok || (as != "left" && as != "right" && as != "center") {
+					return fmt.Errorf("table column align must be left, right, or center")
+				}
 			}
 		}
 		rows, ok := collectionArray(n.Props["rows"])
@@ -147,11 +152,26 @@ func validateCollection(n *Node) error {
 		for _, v := range rows {
 			row, ok := collectionArray(v)
 			if !ok || len(row) != len(cols) {
-				return fmt.Errorf("table row must have %d string cells", len(cols))
+				return fmt.Errorf("table row must have %d cells", len(cols))
 			}
 			for _, cell := range row {
-				if _, ok := cell.(string); !ok {
-					return fmt.Errorf("table cells must be strings")
+				if _, ok := cell.(string); ok {
+					continue
+				}
+				cm, ok := cell.(map[string]any)
+				if !ok {
+					return fmt.Errorf("table cells must be strings or cell objects")
+				}
+				if err := collectionKeys(cm, "text", "fg", "bg", "align", "bold"); err != nil {
+					return err
+				}
+				if _, ok := cm["text"].(string); !ok {
+					return fmt.Errorf("table cell text must be string")
+				}
+				if a, ok := cm["align"]; ok {
+					if as, ok := a.(string); !ok || (as != "left" && as != "right" && as != "center") {
+						return fmt.Errorf("table cell align must be left, right, or center")
+					}
 				}
 			}
 		}
@@ -539,12 +559,43 @@ func (r *Runtime) paintTableRow(screen tcell.Screen, n *Node, value any, header 
 			continue
 		}
 		text := ""
+		cellStyle := st
+		align, _ := m["align"].(string)
+		if align == "" {
+			align = "left"
+		}
 		if header {
 			text, _ = m["title"].(string)
 		} else if i < len(cells) {
-			text, _ = cells[i].(string)
+			if s, ok := cells[i].(string); ok {
+				text = s
+			} else if cm, ok := cells[i].(map[string]any); ok {
+				text, _ = cm["text"].(string)
+				if a, ok := cm["align"].(string); ok && a != "" {
+					align = a
+				}
+				if fg, ok := cm["fg"].(string); ok && fg != "" {
+					cellStyle = cellStyle.Foreground(tcell.GetColor(fg))
+				}
+				if bg, ok := cm["bg"].(string); ok && bg != "" {
+					cellStyle = cellStyle.Background(tcell.GetColor(bg))
+				}
+				if bold, ok := cm["bold"].(bool); ok && bold {
+					cellStyle = cellStyle.Bold(true)
+				}
+			}
 		}
-		put(screen, x, y, text, st, intersect(clip, Rect{x, y, width, 1}))
+		drawX := x
+		if align != "left" {
+			if tw := textWidth(text); tw < width {
+				if align == "right" {
+					drawX = x + (width - tw)
+				} else if align == "center" {
+					drawX = x + (width-tw)/2
+				}
+			}
+		}
+		put(screen, drawX, y, text, cellStyle, intersect(clip, Rect{x, y, width, 1}))
 		x += width + 1
 	}
 }
@@ -801,6 +852,7 @@ func (r *Runtime) keyCollection(n *Node, e *tcell.EventKey) (bool, error) {
 		return true, nil
 	}
 	collectionClamp(s, len(items))
+	oldSelected := s.Selected
 	switch e.Key() {
 	case tcell.KeyUp:
 		s.Selected--
@@ -906,9 +958,19 @@ func (r *Runtime) keyCollection(n *Node, e *tcell.EventKey) (bool, error) {
 			}
 		}
 	}
-	collectionClamp(s, len(r.collectionItems(n, c)))
+	items = r.collectionItems(n, c)
+	collectionClamp(s, len(items))
+	if s.Selected != oldSelected {
+		if changeAction := str(n, "on_change", ""); changeAction != "" {
+			if s.Selected >= 0 && s.Selected < len(items) {
+				it := items[s.Selected]
+				return true, r.Action(changeAction, map[string]any{"id": n.ID, "index": it.index, "value": it.value})
+			}
+		}
+	}
 	return true, nil
 }
+
 func (r *Runtime) mouseCollection(n *Node, e *tcell.EventMouse) (bool, error) {
 	if !isCollection(n) {
 		return false, nil
@@ -946,12 +1008,23 @@ func (r *Runtime) mouseCollection(n *Node, e *tcell.EventMouse) (bool, error) {
 	if index >= len(items) {
 		return true, nil
 	}
+	oldSelected := s.Selected
 	s.Selected = index
 	if n.Type == "tree" {
 		it := items[index]
 		if it.branch && x < body.X+it.depth*2+2 {
 			c.Expanded[it.id] = !collectionExpanded(c, it)
 			return true, nil
+		}
+	}
+	if s.Selected != oldSelected {
+		if changeAction := str(n, "on_change", ""); changeAction != "" {
+			if s.Selected >= 0 && s.Selected < len(items) {
+				it := items[s.Selected]
+				if err := r.Action(changeAction, map[string]any{"id": n.ID, "index": it.index, "value": it.value}); err != nil {
+					return true, err
+				}
+			}
 		}
 	}
 	return true, r.collectionActivate(n, s, c, items)

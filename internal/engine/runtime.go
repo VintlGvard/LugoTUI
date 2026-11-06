@@ -30,6 +30,7 @@ type Runtime struct {
 	mouseDown                      bool
 	tasks                          *taskState
 	stagedFocus                    *string
+	ChunkName                      string
 }
 
 type HostEvent struct {
@@ -37,13 +38,24 @@ type HostEvent struct {
 	Payload any    `json:"payload"`
 }
 
-func Load(source string) (*Runtime, error) { return loadRuntime(source, nil) }
+func Load(source string) (*Runtime, error) { return loadRuntime(source, "", nil) }
+
+func LoadNamed(source, chunkName string) (*Runtime, error) {
+	return loadRuntime(source, chunkName, nil)
+}
 
 func (r *Runtime) Reload(source string) (*Runtime, error) {
 	if r.L == nil {
 		return nil, errors.New("runtime closed")
 	}
-	return loadRuntime(source, r)
+	return loadRuntime(source, r.ChunkName, r)
+}
+
+func (r *Runtime) ReloadNamed(source, chunkName string) (*Runtime, error) {
+	if r.L == nil {
+		return nil, errors.New("runtime closed")
+	}
+	return loadRuntime(source, chunkName, r)
 }
 
 func (r *Runtime) Close() {

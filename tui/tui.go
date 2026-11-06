@@ -41,8 +41,10 @@ type ProtocolError = engine.ProtocolError
 
 func ErrorCode(err error) string { return engine.ErrorCode(err) }
 
-func Load(source string) (*Runtime, error) {
-	r, err := engine.Load(source)
+func Load(source string) (*Runtime, error) { return LoadNamed(source, "") }
+
+func LoadNamed(source, name string) (*Runtime, error) {
+	r, err := engine.LoadNamed(source, name)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +134,14 @@ func (r *Runtime) Reload(source string) (*Runtime, error) {
 	return &Runtime{runtime: next}, nil
 }
 
+func (r *Runtime) ReloadNamed(source, name string) (*Runtime, error) {
+	next, err := r.runtime.ReloadNamed(source, name)
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{runtime: next}, nil
+}
+
 func (r *Runtime) Close() { r.runtime.Close() }
 
 func (r *Runtime) Draw(screen tcell.Screen, diagnostic string) { r.runtime.Draw(screen, diagnostic) }
@@ -156,8 +166,18 @@ func (r *Runtime) ReconcileFocus() { r.runtime.ReconcileFocus() }
 
 func (r *Runtime) CancelTask(id uint64) { r.runtime.CancelTask(id) }
 
+func (r *Runtime) CancelTaskNamed(name string) { r.runtime.CancelTaskNamed(name) }
+
 func (r *Runtime) StartTask(action string, work func(context.Context) (map[string]any, error)) (uint64, error) {
 	return r.runtime.StartTask(action, work)
+}
+
+func (r *Runtime) StartTaskNamed(name, action string, work func(context.Context) (map[string]any, error)) (uint64, error) {
+	return r.runtime.StartTaskNamed(name, action, work)
+}
+
+func (r *Runtime) StartTaskDebounced(name string, delay time.Duration, action string, work func(context.Context) (map[string]any, error)) (uint64, error) {
+	return r.runtime.StartTaskDebounced(name, delay, action, work)
 }
 
 func (r *Runtime) TaskResults() <-chan TaskResult { return r.runtime.TaskResults() }

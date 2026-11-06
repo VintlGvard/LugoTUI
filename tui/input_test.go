@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/VintlGvard/LugoTUI/tui"
@@ -31,6 +32,45 @@ func TestMouseListSelection(t *testing.T) {
 	r.Mouse(tcell.NewEventMouse(0, 1, tcell.WheelDown, 0))
 	if r.State("list").Selected != 2 {
 		t.Fatal("wheel")
+	}
+}
+
+func TestMouseTableWheelChange(t *testing.T) {
+	r := mouseFixture(t, `return {view={type='table',id='tbl',columns={{title='Col',width=10}},rows={{'one'},{'two'},{'three'}},on_change='change'},actions={change=function(e) host.dispatch('change',e) end}}`)
+	r.Mouse(tcell.NewEventMouse(1, 1, tcell.WheelDown, 0))
+	events := r.DrainEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 change event, got %d", len(events))
+	}
+}
+
+func TestKeyTableChange(t *testing.T) {
+	r := mouseFixture(t, `return {view={type='table',id='tbl',columns={{title='Col',width=10}},rows={{'one'},{'two'},{'three'}},on_change='change'},actions={change=function(e) host.dispatch('change',e) end}}`)
+	r.Key(tcell.NewEventKey(tcell.KeyDown, 0, 0))
+	events := r.DrainEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 change event, got %d", len(events))
+	}
+	payload, ok := events[0].Payload.(map[string]any)
+	if !ok || int(payload["index"].(float64)) != 2 {
+		t.Fatalf("expected index 2 in change payload, got %#v", events[0].Payload)
+	}
+	r.Key(tcell.NewEventKey(tcell.KeyRune, 'j', 0))
+	events = r.DrainEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 change event on vim 'j', got %d", len(events))
+	}
+	payload, ok = events[0].Payload.(map[string]any)
+	if !ok || int(payload["index"].(float64)) != 3 {
+		t.Fatalf("expected index 3 in change payload, got %#v", events[0].Payload)
+	}
+}
+
+func TestMouseCollectionChangeError(t *testing.T) {
+	r := mouseFixture(t, `return {view={type='table',id='tbl',columns={{title='Col',width=10}},rows={{'one'},{'two'}},on_change='change'},actions={change=function(e) error('change_boom') end}}`)
+	err := r.Mouse(tcell.NewEventMouse(1, 2, tcell.Button1, 0))
+	if err == nil || !strings.Contains(err.Error(), "change_boom") {
+		t.Fatalf("expected error from on_change, got %v", err)
 	}
 }
 

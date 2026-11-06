@@ -138,8 +138,9 @@ return {
 - `ui.get(key)`: Read value from explicit model.
 - `ui.set(key, value)`: Write value to explicit model (preserves across hot reload).
 - `ui.patch(id, props)`: Update specific properties of an existing node without full rebuild.
+- `ui.patch({ [id1] = props1, [id2] = props2 })` / `ui.patch_all(table)`: Batch update multiple nodes in a single atomic commit.
 - `ui.replace(id, new_node)`: Replace a node and its children.
-- `host.dispatch(action, payload)`: Dispatch event to Go host (`OnEvent`).
+- `host.dispatch(action, payload, [opts])`: Dispatch event to Go host (`OnEvent`). Pass `{ debounce = true }` in `opts` or payload to deduplicate and replace pending events by action.
 
 ### Focus & Navigation APIs
 - `ui.focus(id)`: Request keyboard focus for node `id`.
@@ -248,22 +249,23 @@ actions = {
   ui.table {
       id = "items_table",
       columns = {
-          { title = "ID", width = 6 },
-          { title = "Name", width = 20 },
-          { title = "Price", width = 10 },
+          { title = "ID", width = 6, align = "left" },
+          { title = "Name", width = 20, align = "left" },
+          { title = "Price", width = 10, align = "right" },
       },
       rows = {
           { "1", "Widget A", "$10" },
-          { "2", "Widget B", "$20" },
+          { "2", { text = "Widget B", fg = "green", bold = true, align = "right" }, "$20" },
       },
       bind = "selected_row",
       on_select = "on_row_select",
+      on_change = "on_row_change", -- { id, index, value }
   }
   ```
 - **`ui.list`**: List with optional fuzzy filtering.
-  `id`, `items = { "Alpha", "Beta" }`, `bind = "selected_idx"`, `on_select = "action"`, `filterable = true` (press `/` to filter).
+  `id`, `items = { "Alpha", "Beta" }`, `bind = "selected_idx"`, `on_select = "action"`, `on_change = "action"`, `filterable = true` (press `/` to filter; query updates trigger `on_change` with `{ id, query, value }`, row selection triggers `{ id, index, value }`).
 - **`ui.tree`**: Hierarchical tree view.
-  `id`, `items = { { id = "root", text = "Root", expanded = true, children = { ... } } }`, `on_select`.
+  `id`, `items = { { id = "root", text = "Root", expanded = true, children = { ... } } }`, `on_select`, `on_change`.
 - **`ui.viewport`**: Scrollable read-only text view with Vim keys (`j`/`k`, `d`/`u`, `g`/`G`).
   `id`, `text = "..."`, `soft_wrap = true`, `show_line_numbers = true`.
 
@@ -320,18 +322,9 @@ func main() {
 			case "start_search":
 				query, _ := event.Payload["query"].(string)
 
-				if taskID != 0 {
-					rt.CancelTask(taskID)
-				}
-
-				var err error
-				taskID, err = rt.StartTask("search_complete", func(ctx context.Context) (map[string]any, error) {
-					select {
-					case <-time.After(300 * time.Millisecond):
-						return map[string]any{"result": "Matched: " + query}, nil
-					case <-ctx.Done():
-						return nil, ctx.Err()
-					}
+				// Automatically cancel previous pending task by name and delay 200ms:
+				_, err := rt.StartTaskDebounced("search", 200*time.Millisecond, "search_complete", func(ctx context.Context) (map[string]any, error) {
+					return map[string]any{"result": "Matched: " + query}, nil
 				})
 				if err != nil {
 					fmt.Printf("start task error: %v\n", err)

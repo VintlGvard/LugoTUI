@@ -81,7 +81,7 @@ func RunOptions(options Options) error {
 	if err != nil {
 		return err
 	}
-	r, err := engine.Load(source)
+	r, err := engine.LoadNamed(source, options.AppFile)
 	if err != nil {
 		return err
 	}

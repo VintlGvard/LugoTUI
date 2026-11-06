@@ -410,3 +410,174 @@ func TestLuaNodeParserContext(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadNamedErrorStackTrace(t *testing.T) {
+	_, err := tui.LoadNamed("return {view=function() error('boom') end}", "special_name.lua")
+	if err == nil || !strings.Contains(err.Error(), "special_name.lua") {
+		t.Fatalf("expected chunkName special_name.lua in error, got: %v", err)
+	}
+}
+
+func TestBatchPatch(t *testing.T) {
+	r, err := tui.Load(`local ui = require('ui'); return {
+		view = ui.column {
+			ui.text { id = 'a', text = 'init_a' },
+			ui.text { id = 'b', text = 'init_b' }
+		},
+		actions = {
+			batch = function()
+				ui.patch {
+					a = { text = 'patched_a' },
+					b = { text = 'patched_b' }
+				}
+			end,
+			batch_all = function()
+				ui.patch_all {
+					a = { text = 'all_a' },
+					b = { text = 'all_b' }
+				}
+			end
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Action("batch", nil); err != nil {
+		t.Fatal(err)
+	}
+	if str(r.Node("a"), "text", "") != "patched_a" || str(r.Node("b"), "text", "") != "patched_b" {
+		t.Fatal("batch patch failed")
+	}
+	if err := r.Action("batch_all", nil); err != nil {
+		t.Fatal(err)
+	}
+	if str(r.Node("a"), "text", "") != "all_a" || str(r.Node("b"), "text", "") != "all_b" {
+		t.Fatal("patch_all failed")
+	}
+}
+
+func TestDebouncedDispatch(t *testing.T) {
+	r, err := tui.Load(`return {
+		view = { type = 'box' },
+		actions = {
+			spam = function()
+				host.dispatch('search', { q = 'a' }, { debounce = true })
+				host.dispatch('search', { q = 'ab' }, { debounce = true })
+				host.dispatch('search', { q = 'abc' }, { debounce = true })
+			end
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Action("spam", nil); err != nil {
+		t.Fatal(err)
+	}
+	events := r.DrainEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 debounced event, got %d", len(events))
+	}
+	payload, ok := events[0].Payload.(map[string]any)
+	if !ok || payload["q"] != "abc" {
+		t.Fatalf("expected latest payload 'abc', got %#v", events[0].Payload)
+	}
+}
+
+func TestDebouncedTasks(t *testing.T) {
+	r, err := tui.Load(`return { view = { type = 'box' }, actions = { done = function(e) host.dispatch('done', e) end } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	for i := 1; i <= 3; i++ {
+		val := i
+		_, err := r.StartTaskDebounced("fetch", 20*time.Millisecond, "done", func(ctx context.Context) (map[string]any, error) {
+			return map[string]any{"val": val}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case res := <-r.TaskResults():
+		if err := r.HandleTask(res); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("task timed out")
+	}
+	events := r.DrainEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 task completion event, got %d", len(events))
+	}
+	payload, ok := events[0].Payload.(map[string]any)
+	if !ok || int(payload["val"].(float64)) != 3 {
+		t.Fatalf("expected val 3 from debounced task, got %#v", events[0].Payload)
+	}
+}
+
+func TestModalBlocksGlobalKeymap(t *testing.T) {
+	r, err := tui.Load(`return {
+		view = {
+			type = 'box',
+			{ type = 'text', id = 'bg_text', text = 'bg' },
+			{ type = 'panel', id = 'modal_panel', modal = true, hidden = false, { type = 'button', id = 'modal_btn', text = 'ok' } }
+		},
+		keymap = {
+			['x'] = 'global_action'
+		},
+		actions = {
+			global_action = function() host.dispatch('global', {}) end
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Key(tcell.NewEventKey(tcell.KeyRune, 'x', 0)); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.DrainEvents()) != 0 {
+		t.Fatal("global keymap fired while modal was active")
+	}
+	if err := r.Key(tcell.NewEventKey(tcell.KeyEscape, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Key(tcell.NewEventKey(tcell.KeyRune, 'x', 0)); err != nil {
+		t.Fatal(err)
+	}
+	events := r.DrainEvents()
+	if len(events) != 1 || events[0].Action != "global" {
+		t.Fatalf("expected global action after modal closed, got %#v", events)
+	}
+}
+
+func TestTableStylingAndAlignment(t *testing.T) {
+	r := mouseFixture(t, `return {
+		view = {
+			type = 'table',
+			id = 'tbl',
+			columns = {
+				{ title = 'Name', width = 10, align = 'left' },
+				{ title = 'Count', width = 10, align = 'right' }
+			},
+			rows = {
+				{ 'Item1', { text = '42', align = 'right', fg = 'green', bold = true } },
+				{ { text = 'Centered', align = 'center' }, '999' }
+			}
+		}
+	}`)
+	s := tcell.NewSimulationScreen("UTF-8")
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Fini()
+	s.SetSize(40, 10)
+	r.Draw(s, "")
+	text := screenContent(s)
+	if !strings.Contains(text, "Item1") || !strings.Contains(text, "42") {
+		t.Fatalf("rendered table missing cells: %s", text)
+	}
+}
