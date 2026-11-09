@@ -8,6 +8,7 @@ run:
 	go run ./cmd/lugotui
 
 test:
+	test -z "$$(gofmt -l .)"
 	go test -race ./...
 	go vet ./...
 
