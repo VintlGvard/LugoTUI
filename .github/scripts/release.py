@@ -13,6 +13,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -121,8 +122,8 @@ def build(args):
     if not args.local and command("git", "rev-parse", "HEAD") != commit:
         raise RuntimeError("Checkout HEAD must be exact tag commit")
     if args.dry_run:
-        print(json.dumps({"version": args.version, "commit": commit, "local": args.local,
-                          "targets": TARGETS, "output": str(args.output.resolve())}, indent=2))
+        sys.stdout.write(json.dumps({"version": args.version, "commit": commit, "local": args.local,
+                                     "targets": TARGETS, "output": str(args.output.resolve())}, indent=2) + "\n")
         return
 
     args.output.mkdir(parents=True)
@@ -183,7 +184,8 @@ def build(args):
                     for path in files:
                         archive.add(path, arcname=name + "/" + path.relative_to(payload).as_posix(), recursive=False)
             validate_archive(artifact, name, expected)
-            print(f"Validated {artifact.name}", flush=True)
+            sys.stdout.write(f"Validated {artifact.name}\n")
+            sys.stdout.flush()
     checksums = {path.name: sha256(path.read_bytes()) for path in sorted(args.output.iterdir())}
     if len(checksums) != 6:
         raise RuntimeError("Expected exactly six release archives")
@@ -193,7 +195,7 @@ def build(args):
         digest, name = line.split("  ", 1)
         if sha256((args.output / name).read_bytes()) != digest:
             raise RuntimeError(f"Checksum mismatch: {name}")
-    print(f"Validated six archives, SHA256SUMS.txt, {count} dependency modules and Go runtime licenses")
+    sys.stdout.write(f"Validated six archives, SHA256SUMS.txt, {count} dependency modules and Go runtime licenses\n")
 
 
 def main():
