@@ -165,4 +165,3 @@ func TestButtonLayoutAndTruncation(t *testing.T) {
 		t.Fatalf("expected button to shrink to <= 4, got %d", r2.Node("btn").Rect.W)
 	}
 }
-
