@@ -384,6 +384,65 @@ func keyMatches(pattern string, e *tcell.EventKey) bool {
 	return e.Key() != tcell.KeyRune && strings.EqualFold(strings.ReplaceAll(pattern, "+", "-"), strings.ReplaceAll(name, "+", "-"))
 }
 
+func findAncestors(root, target *Node) []*Node {
+	if root == nil || target == nil || root == target {
+		return nil
+	}
+	var path []*Node
+	var dfs func(*Node) bool
+	dfs = func(cur *Node) bool {
+		if cur == target {
+			return true
+		}
+		for _, child := range cur.Children {
+			if child == nil {
+				continue
+			}
+			if dfs(child) {
+				path = append(path, cur)
+				return true
+			}
+		}
+		return false
+	}
+	dfs(root)
+	return path
+}
+
+func (r *Runtime) bubbleAncestorKey(scope, target *Node, e *tcell.EventKey) error {
+	candidates := findAncestors(scope, target)
+	if target == nil {
+		for node := range ordered(scope) {
+			if node != scope {
+				candidates = append(candidates, node)
+			}
+		}
+	}
+	for _, ancestor := range candidates {
+		if km, ok := ancestor.Props["keymap"].(map[string]any); ok {
+			keys := make([]string, 0, len(km))
+			for k := range km {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, pattern := range keys {
+				if s, ok := km[pattern].(string); ok && s != "" && keyMatches(pattern, e) {
+					return r.Action(s, map[string]any{
+						"id":    ancestor.ID,
+						"key":   e.Name(),
+						"focus": r.Focus,
+						"rune":  string(e.Rune()),
+						"ctrl":  e.Modifiers()&tcell.ModCtrl != 0,
+						"alt":   e.Modifiers()&tcell.ModAlt != 0,
+						"shift": e.Modifiers()&tcell.ModShift != 0,
+					})
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (r *Runtime) Key(e *tcell.EventKey) error {
 	r.ReconcileFocus()
 	scope := r.scope()
@@ -393,13 +452,26 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 	}
 	var action string
 	if scope == r.Root {
-		keys := make([]string, 0, len(r.keymap))
-		for k := range r.keymap {
+		combined := make(map[string]string, len(r.keymap))
+		for k, v := range r.keymap {
+			combined[k] = v
+		}
+		if rootKm, ok := r.Root.Props["keymap"].(map[string]any); ok {
+			for k, v := range rootKm {
+				if s, ok := v.(string); ok && s != "" {
+					if _, exists := combined[k]; !exists {
+						combined[k] = s
+					}
+				}
+			}
+		}
+		keys := make([]string, 0, len(combined))
+		for k := range combined {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, pattern := range keys {
-			if act := r.keymap[pattern]; act != "" && keyMatches(pattern, e) {
+			if act := combined[pattern]; act != "" && keyMatches(pattern, e) {
 				action = act
 				break
 			}
@@ -470,7 +542,7 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 		return nil
 	}
 	if n == nil {
-		return nil
+		return r.bubbleAncestorKey(scope, nil, e)
 	}
 	var dir string
 	switch e.Key() {
@@ -567,7 +639,7 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 		return nil
 	}
 	if n.Type != "input" && n.Type != "textarea" {
-		return nil
+		return r.bubbleAncestorKey(scope, n, e)
 	}
 	g := graphemes(s.Value)
 	s.Cursor = max(0, min(s.Cursor, len(g)))
@@ -680,6 +752,10 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 			s.Anchor = old
 		} else if !shift {
 			s.Anchor = -1
+		}
+	} else {
+		if err := r.bubbleAncestorKey(scope, n, e); err != nil {
+			return err
 		}
 	}
 	return nil

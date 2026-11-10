@@ -40,6 +40,7 @@ type (
 
 var (
 	ErrPanicRecovered    = tui.ErrPanicRecovered
+	ErrQuit              = tui.ErrQuit
 	NewProgram           = tui.NewProgram
 	RunApp               = tui.RunApp
 	RunSource            = tui.RunSource

@@ -234,6 +234,200 @@ func TestAllBuilderWidgetsValidateAndRender(t *testing.T) {
 	}
 }
 
+func TestInlineActionClosuresAndBuilderProps(t *testing.T) {
+	var selectedIdx int
+	var selectedVal any
+	var submittedText string
+
+	rt, err := tui.LoadViewFunc(func(r *tui.Runtime) *tui.Node {
+		return tui.Overlay(
+			tui.Column(
+				tui.Textf("Count=%d Open=%v", r.Int("count", 0), r.Bool("open", false)).SetID("status").Wrap(false),
+				tui.Input("draft", "Type here").
+					SetID("inp").
+					Masked(true).
+					MaxLength(8).
+					OnChangeText(func(val string) {
+						_ = r.Set("live", val)
+					}).
+					OnSubmitText(func(val string) {
+						submittedText = val
+					}),
+				tui.List("first", "second").
+					SetID("lst").
+					OnSelectItem(func(index int, value any) {
+						selectedIdx = index
+						selectedVal = value
+					}),
+				tui.Button("+1").SetID("btn").OnClickDo(func() {
+					_ = r.AddInt("count", 1)
+				}),
+				tui.Help(
+					tui.HelpBinding{Keys: []string{"q"}, Description: "QuitApp"},
+				).SetID("hlp").Height(1),
+			).KeyDo("t", func() {
+				r.Toggle("open")
+			}),
+			tui.If(r.Bool("open"),
+				tui.Modal("dlg", "Confirm",
+					tui.Text("Modal body").Wrap(true),
+				).Absolute(2, 1).Size(20, 6),
+			),
+		)
+	})
+	if err != nil {
+		t.Fatalf("LoadViewFunc with inline closures failed: %v", err)
+	}
+	defer rt.Close()
+
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("sim.Init: %v", err)
+	}
+	defer sim.Fini()
+	sim.SetSize(80, 24)
+	rt.Draw(sim, "")
+
+	// Check Help description rendered onto screen ("q QuitApp")
+	helpFound := false
+	for y := 0; y < 24; y++ {
+		var row strings.Builder
+		for x := 0; x < 80; x++ {
+			r, _, _, _ := sim.GetContent(x, y)
+			row.WriteRune(r)
+		}
+		if strings.Contains(row.String(), "q QuitApp") {
+			helpFound = true
+			break
+		}
+	}
+	if !helpFound {
+		t.Fatal("expected Help widget to render 'q QuitApp'")
+	}
+
+	// Type into masked input with MaxLength(8)
+	for _, ch := range "1234567890" {
+		if err := rt.Key(tcell.NewEventKey(tcell.KeyRune, ch, tcell.ModNone)); err != nil {
+			t.Fatalf("Key(%q): %v", ch, err)
+		}
+	}
+	if got := rt.String("draft"); got != "12345678" {
+		t.Fatalf("expected MaxLength(8) to cap draft at '12345678', got %q", got)
+	}
+	if got := rt.String("live"); got != "12345678" {
+		t.Fatalf("expected OnChangeText to set live='12345678', got %q", got)
+	}
+	if err := rt.Key(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone)); err != nil {
+		t.Fatalf("Enter on input: %v", err)
+	}
+	if submittedText != "12345678" {
+		t.Fatalf("expected OnSubmitText '12345678', got %q", submittedText)
+	}
+
+	// Select item in list
+	if err := rt.SetFocus("lst"); err != nil {
+		t.Fatalf("SetFocus(lst): %v", err)
+	}
+	if err := rt.Key(tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)); err != nil {
+		t.Fatalf("KeyDown on list: %v", err)
+	}
+	if err := rt.Key(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone)); err != nil {
+		t.Fatalf("Enter on list: %v", err)
+	}
+	if selectedIdx != 2 || selectedVal != "second" {
+		t.Fatalf("expected OnSelectItem (2, 'second'), got (%d, %v)", selectedIdx, selectedVal)
+	}
+
+	// Click button via Enter
+	if err := rt.SetFocus("btn"); err != nil {
+		t.Fatalf("SetFocus(btn): %v", err)
+	}
+	if err := rt.Key(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone)); err != nil {
+		t.Fatalf("Enter on btn: %v", err)
+	}
+	if got := rt.Int("count"); got != 1 {
+		t.Fatalf("expected count=1 after OnClickDo, got %d", got)
+	}
+
+	// Trigger KeyDo("t") to open modal with Absolute(2, 1)
+	if err := rt.Key(tcell.NewEventKey(tcell.KeyRune, 't', tcell.ModNone)); err != nil {
+		t.Fatalf("Key 't': %v", err)
+	}
+	if !rt.Bool("open") || rt.Node("dlg") == nil {
+		t.Fatal("expected modal 'dlg' visible after KeyDo('t')")
+	}
+
+	// Test dynamic Update, Strings, Map, Float
+	if err := rt.Update(map[string]any{
+		"ratio": 3.5,
+		"tags":  []string{"go", "lua"},
+		"meta":  map[string]any{"env": "prod"},
+	}); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if got := rt.Float("ratio"); got != 3.5 {
+		t.Fatalf("expected Float('ratio')=3.5, got %v", got)
+	}
+	if got := rt.Strings("tags"); len(got) != 2 || got[0] != "go" || got[1] != "lua" {
+		t.Fatalf("expected Strings('tags')=[go lua], got %v", got)
+	}
+	if got := rt.Map("meta"); got["env"] != "prod" {
+		t.Fatalf("expected Map('meta')[env]=prod, got %v", got)
+	}
+}
+
+func TestErrQuitExitsProgramCleanly(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("sim.Init: %v", err)
+	}
+	sim.SetSize(60, 20)
+
+	ready := make(chan struct{})
+	var finalRuntime *tui.Runtime
+	p := tui.NewProgram(
+		tui.WithScreen(sim),
+		tui.WithViewFunc(func(rt *tui.Runtime) *tui.Node {
+			return tui.Column(
+				tui.Button("Save & Quit").SetID("quit_btn").OnClickErr(func() error {
+					_ = rt.Set("saved", true)
+					return rt.Quit()
+				}),
+			)
+		}),
+		tui.WithOnReady(func(rt *tui.Runtime) {
+			finalRuntime = rt
+			close(ready)
+		}),
+	)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Run()
+	}()
+
+	select {
+	case <-ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for program ready")
+	}
+
+	sim.PostEvent(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone))
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected nil error on ErrQuit, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ErrQuit program exit")
+	}
+
+	if finalRuntime == nil || !finalRuntime.Bool("saved") {
+		t.Fatal("expected state mutation before rt.Quit() to be preserved")
+	}
+}
+
 func TestHybridLuaWithoutBoilerplateActions(t *testing.T) {
 	// Notice: no `actions = { ... }` table in Lua at all!
 	// `on_click = "ping"` dispatches directly to Go WithHandlers.

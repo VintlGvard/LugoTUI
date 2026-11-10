@@ -357,6 +357,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 	}
 	hasEventHandler := options.OnEvent != nil || len(options.Middlewares) > 0
 	eventHandler := buildEventHandler(options)
+	shouldQuit := false
 	dispatch := func() bool {
 		if !hasEventHandler {
 			if options.SocketPath == "" {
@@ -375,7 +376,11 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 				continue
 			}
 			if e := eventHandler(r, event); e != nil {
-				diagnostic = e.Error()
+				if errors.Is(e, engine.ErrQuit) {
+					shouldQuit = true
+				} else {
+					diagnostic = e.Error()
+				}
 			}
 		}
 		if len(r.Events) != 0 {
@@ -446,39 +451,20 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 				redraw = true
 			case ControlAction:
 				ctrlErr = r.Action(msg.Action, msg.Payload)
+				if errors.Is(ctrlErr, engine.ErrQuit) {
+					shouldQuit = true
+					ctrlErr = nil
+				}
 				if ctrlErr == nil {
 					diagnostic = ""
 				}
 				redraw = true
 			case ControlSet:
-				if r.Data == nil {
-					r.Data = map[string]any{}
-				}
-				oldVal := r.Data[msg.Key]
-				r.Data[msg.Key] = msg.Value
-				if ctrlErr = engine.ValidateModel(r.Data); ctrlErr != nil {
-					r.Data[msg.Key] = oldVal
-				} else {
-					for id, n := range r.Nodes {
-						if (n.Type == "input" || n.Type == "textarea") && r.State[id] != nil {
-							if b, _ := n.Props["bind"].(string); b == msg.Key {
-								if s, ok := msg.Value.(string); ok {
-									r.State[id].Value = s
-									r.State[id].Cursor = min(r.State[id].Cursor, len([]rune(s)))
-									r.State[id].Anchor = -1
-								}
-							}
-						}
-					}
-					r.Revision++
-					for _, fn := range r.StateObservers {
-						if fn != nil {
-							fn(msg.Key, oldVal, msg.Value)
-						}
-					}
+				ctrlErr = r.Set(msg.Key, msg.Value)
+				if ctrlErr == nil {
 					diagnostic = ""
-					redraw = true
 				}
+				redraw = true
 			case ControlPatch:
 				ctrlErr = r.Patch(msg.ID, msg.Props)
 				if ctrlErr == nil {
@@ -562,9 +548,16 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 			redraw = true
 		}
 		if err != nil {
-			diagnostic = err.Error()
+			if errors.Is(err, engine.ErrQuit) {
+				shouldQuit = true
+			} else {
+				diagnostic = err.Error()
+			}
 		}
 		called := dispatch()
+		if shouldQuit {
+			return nil
+		}
 		if redraw || called || revision != r.Revision || focus != r.Focus || previousDiagnostic != diagnostic {
 			drawRuntime(options, screen, r, diagnostic)
 		}

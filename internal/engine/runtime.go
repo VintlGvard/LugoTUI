@@ -10,6 +10,10 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+var ErrQuit = errors.New("lugotui: quit")
+
+type GoActionFunc = func(rt *Runtime, payload map[string]any) error
+
 type Runtime struct {
 	L                              *lua.LState
 	Root                           *Node
@@ -117,16 +121,8 @@ func LoadNode(root *Node, data map[string]any, goActions map[string]func(*Runtim
 	}
 	clonedRoot := cloneNode(root)
 	AutoAssignIDs(clonedRoot)
-	if err := sanitizeGoTreeProps(clonedRoot); err != nil {
-		return nil, err
-	}
-	nodes, err := validateTree(clonedRoot)
-	if err != nil {
-		return nil, err
-	}
 	r := &Runtime{
 		Root:             clonedRoot,
-		Nodes:            nodes,
 		State:            map[string]*WidgetState{},
 		Data:             cloneData(data),
 		ChunkName:        "<go>",
@@ -134,6 +130,15 @@ func LoadNode(root *Node, data map[string]any, goActions map[string]func(*Runtim
 		GoActions:        cloneGoActions(goActions),
 		AllowHostActions: allowHostActions,
 	}
+	r.bindInlineActions(clonedRoot)
+	if err := sanitizeGoTreeProps(clonedRoot); err != nil {
+		return nil, err
+	}
+	nodes, err := validateTree(clonedRoot)
+	if err != nil {
+		return nil, err
+	}
+	r.Nodes = nodes
 	if err := r.validateActions(); err != nil {
 		return nil, err
 	}
@@ -187,6 +192,9 @@ func (r *Runtime) reconcileRoot(next *Node) error {
 	}
 	cloned := cloneNode(next)
 	AutoAssignIDs(cloned)
+	candidate := *r
+	candidate.GoActions = cloneGoActions(r.GoActions)
+	candidate.bindInlineActions(cloned)
 	if err := sanitizeGoTreeProps(cloned); err != nil {
 		return err
 	}
@@ -194,7 +202,6 @@ func (r *Runtime) reconcileRoot(next *Node) error {
 	if err != nil {
 		return err
 	}
-	candidate := *r
 	candidate.Root = cloned
 	if err := candidate.validateActions(); err != nil {
 		return err
@@ -211,6 +218,20 @@ func (r *Runtime) reconcileRoot(next *Node) error {
 	candidate.layoutValid = false
 	*r = candidate
 	return nil
+}
+
+func (r *Runtime) syncBoundWidgets() {
+	for id, n := range r.Nodes {
+		if n.Type == "input" || n.Type == "textarea" {
+			if key := str(n, "bind", ""); key != "" {
+				if v, ok := r.Data[key].(string); ok && v != r.State[id].Value {
+					r.State[id].Value = v
+					r.State[id].Cursor = min(r.State[id].Cursor, len(graphemes(v)))
+					r.State[id].Anchor = -1
+				}
+			}
+		}
+	}
 }
 
 func (r *Runtime) ReconcileTree(next *Node) error {
@@ -253,18 +274,7 @@ func (r *Runtime) Set(key string, value any) error {
 		}
 		return err
 	}
-	for id, n := range r.Nodes {
-		if n.Type == "input" || n.Type == "textarea" {
-			if str(n, "bind", "") == key {
-				s, _ := cloned.(string)
-				if s != r.State[id].Value {
-					r.State[id].Value = s
-					r.State[id].Cursor = min(r.State[id].Cursor, len(graphemes(s)))
-					r.State[id].Anchor = -1
-				}
-			}
-		}
-	}
+	r.syncBoundWidgets()
 	if r.ViewFunc != nil {
 		if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
 			if existed {
@@ -272,6 +282,7 @@ func (r *Runtime) Set(key string, value any) error {
 			} else {
 				delete(r.Data, key)
 			}
+			r.syncBoundWidgets()
 			return err
 		}
 	} else {
@@ -281,6 +292,152 @@ func (r *Runtime) Set(key string, value any) error {
 		r.notifyState(key, oldVal, cloned)
 	}
 	return nil
+}
+
+func (r *Runtime) Update(patch map[string]any) error {
+	if r.isClosed() {
+		return errors.New("runtime closed")
+	}
+	if len(patch) == 0 {
+		return nil
+	}
+	if r.inAction {
+		for k, v := range patch {
+			if err := r.Set(k, v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	oldData := cloneData(r.Data)
+	for k, v := range patch {
+		if k == "" {
+			r.Data = oldData
+			return errors.New("empty model key")
+		}
+		cloned, err := cloneValue(v, 0)
+		if err != nil {
+			r.Data = oldData
+			return err
+		}
+		if cloned == nil {
+			delete(r.Data, k)
+		} else {
+			r.Data[k] = cloned
+		}
+	}
+	if err := ValidateModel(r.Data); err != nil {
+		r.Data = oldData
+		return err
+	}
+	r.syncBoundWidgets()
+	if r.ViewFunc != nil {
+		if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+			r.Data = oldData
+			r.syncBoundWidgets()
+			return err
+		}
+	} else {
+		r.Revision++
+	}
+	for k := range patch {
+		oldVal := oldData[k]
+		newVal := r.Data[k]
+		if !equalDataVal(oldVal, newVal) {
+			r.notifyState(k, oldVal, newVal)
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) String(key string, fallback ...string) string {
+	if v, ok := r.Data[key].(string); ok {
+		return v
+	}
+	if len(fallback) > 0 {
+		return fallback[0]
+	}
+	return ""
+}
+
+func (r *Runtime) Int(key string, fallback ...int) int {
+	switch v := r.Data[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	if len(fallback) > 0 {
+		return fallback[0]
+	}
+	return 0
+}
+
+func (r *Runtime) Float(key string, fallback ...float64) float64 {
+	if f, ok := floatVal(r.Data[key]); ok {
+		return f
+	}
+	if len(fallback) > 0 {
+		return fallback[0]
+	}
+	return 0
+}
+
+func (r *Runtime) Bool(key string, fallback ...bool) bool {
+	if v, ok := r.Data[key].(bool); ok {
+		return v
+	}
+	if len(fallback) > 0 {
+		return fallback[0]
+	}
+	return false
+}
+
+func (r *Runtime) Strings(key string) []string {
+	switch v := r.Data[key].(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func (r *Runtime) Map(key string) map[string]any {
+	if m, ok := r.Data[key].(map[string]any); ok {
+		if cloned, err := cloneValue(m, 0); err == nil {
+			if cm, ok := cloned.(map[string]any); ok {
+				return cm
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) AddInt(key string, delta int) error {
+	return r.Set(key, r.Int(key)+delta)
+}
+
+func (r *Runtime) ToggleBool(key string) error {
+	return r.Set(key, !r.Bool(key))
+}
+
+func (r *Runtime) Toggle(key string) bool {
+	next := !r.Bool(key)
+	_ = r.Set(key, next)
+	return next
+}
+
+func (r *Runtime) Quit() error {
+	return ErrQuit
 }
 
 func (r *Runtime) Reload(source string) (*Runtime, error) {
@@ -443,9 +600,6 @@ func (r *Runtime) Replace(id string, subtree *Node) error {
 	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
-	if subtree != nil {
-		AutoAssignIDs(subtree)
-	}
 	r.Staged = append(r.Staged, Operation{ID: id, Tree: subtree, Replace: true})
 	if r.inAction {
 		return nil
@@ -516,7 +670,12 @@ func (r *Runtime) Commit() error {
 			var replace func(**Node)
 			replace = func(p **Node) {
 				if (*p).ID == op.ID {
-					*p = cloneNode(op.Tree)
+					clonedSub := cloneNode(op.Tree)
+					if clonedSub.ID == "" {
+						clonedSub.ID = op.ID
+					}
+					AutoAssignIDs(clonedSub)
+					*p = clonedSub
 					for added := range ordered(*p) {
 						origins[added] = i + 1
 					}
@@ -537,6 +696,9 @@ func (r *Runtime) Commit() error {
 			}
 		}
 	}
+	candidate := *r
+	candidate.GoActions = cloneGoActions(r.GoActions)
+	candidate.bindInlineActions(root)
 	ids, e := validateTree(root)
 	if e != nil {
 		return operationError(e)
@@ -552,7 +714,6 @@ func (r *Runtime) Commit() error {
 			}
 		}
 	}
-	candidate := *r
 	candidate.Root = root
 	if e := candidate.validateActions(); e != nil {
 		return operationError(e)
@@ -652,9 +813,14 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 		}
 		ranAny = true
 	}
-	if r.hasGoAction(name) {
+	quitRequested := false
+	if !ranAny && r.hasGoAction(name) {
 		if e := r.GoActions[name](r, event); e != nil {
-			return e
+			if errors.Is(e, ErrQuit) {
+				quitRequested = true
+			} else {
+				return e
+			}
 		}
 		ranAny = true
 	}
@@ -676,17 +842,7 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 			return e
 		}
 	}
-	for id, n := range r.Nodes {
-		if n.Type == "input" || n.Type == "textarea" {
-			if key := str(n, "bind", ""); key != "" {
-				if v, ok := r.Data[key].(string); ok && v != r.State[id].Value {
-					r.State[id].Value = v
-					r.State[id].Cursor = min(r.State[id].Cursor, len(graphemes(v)))
-					r.State[id].Anchor = -1
-				}
-			}
-		}
-	}
+	r.syncBoundWidgets()
 	r.Revision++
 	committed = true
 	if len(r.StateObservers) > 0 {
@@ -700,6 +856,9 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 				r.notifyState(k, oldVal, nil)
 			}
 		}
+	}
+	if quitRequested {
+		return ErrQuit
 	}
 	return nil
 }
@@ -773,9 +932,6 @@ func cloneLuaValue(L *lua.LState, v lua.LValue, depth int) lua.LValue {
 	t, ok := v.(*lua.LTable)
 	if !ok || t == L.G.Global {
 		return v
-	}
-	if s, ok := v.(lua.LString); ok {
-		_ = s
 	}
 	copyTbl := L.NewTable()
 	t.ForEach(func(k, val lua.LValue) {

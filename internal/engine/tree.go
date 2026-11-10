@@ -30,6 +30,7 @@ type Node struct {
 	linesCacheWrap      bool
 	linesCacheValid     bool
 	linesCache          []string
+	inlineActions       map[string]GoActionFunc
 }
 
 type nodeError struct {
@@ -139,12 +140,27 @@ func cloneValue(v any, depth int) (any, error) {
 	}
 }
 
+func CopyValue(v any) any {
+	cloned, err := cloneValue(v, 0)
+	if err != nil {
+		return nil
+	}
+	return cloned
+}
+
 func cloneNode(n *Node) *Node {
+	if n == nil {
+		return nil
+	}
 	c := *n
 	c.Props = maps.Clone(n.Props)
 	if c.Props == nil {
 		c.Props = make(map[string]any)
 	}
+	if km, ok := n.Props["keymap"].(map[string]any); ok {
+		c.Props["keymap"] = maps.Clone(km)
+	}
+	c.inlineActions = maps.Clone(n.inlineActions)
 	c.Children = make([]*Node, len(n.Children))
 	for i, ch := range n.Children {
 		c.Children[i] = cloneNode(ch)
@@ -464,4 +480,50 @@ func AutoAssignIDs(root *Node) {
 		}
 	}
 	assign(root, "", 0, 0)
+}
+
+func (r *Runtime) bindInlineActions(root *Node) {
+	if root == nil {
+		return
+	}
+	if r.GoActions == nil {
+		r.GoActions = map[string]GoActionFunc{}
+	}
+	seen := map[*Node]bool{}
+	var walk func(*Node, int)
+	walk = func(n *Node, depth int) {
+		if n == nil || depth > 64 || seen[n] {
+			return
+		}
+		seen[n] = true
+		if len(n.inlineActions) > 0 {
+			if n.Props == nil {
+				n.Props = map[string]any{}
+			}
+			for prop, fn := range n.inlineActions {
+				if fn == nil {
+					continue
+				}
+				if strings.HasPrefix(prop, "keymap:") {
+					key := strings.TrimPrefix(prop, "keymap:")
+					actName := "__inline:" + n.ID + ":key:" + key
+					km, ok := n.Props["keymap"].(map[string]any)
+					if !ok || km == nil {
+						km = map[string]any{}
+						n.Props["keymap"] = km
+					}
+					km[key] = actName
+					r.GoActions[actName] = fn
+				} else {
+					actName := "__inline:" + n.ID + ":" + prop
+					n.Props[prop] = actName
+					r.GoActions[actName] = fn
+				}
+			}
+		}
+		for _, c := range n.Children {
+			walk(c, depth+1)
+		}
+	}
+	walk(root, 0)
 }

@@ -46,12 +46,12 @@ func Button(label string, onClick ...string) *Node {
 	return engine.Button(label, onClick...)
 }
 
-func Input(bindKey string) *Node {
-	return engine.Input(bindKey)
+func Input(bindKey string, placeholder ...string) *Node {
+	return engine.Input(bindKey, placeholder...)
 }
 
-func Textarea(bindKey string) *Node {
-	return engine.Textarea(bindKey)
+func Textarea(bindKey string, placeholder ...string) *Node {
+	return engine.Textarea(bindKey, placeholder...)
 }
 
 func List(items ...string) *Node {

@@ -162,10 +162,10 @@ p := lugo.NewProgram(
   - `Column(children ...*Node) *Node`
   - `Row(children ...*Node) *Node`
   - `Box(children ...*Node) *Node`
-  - `Panel(title string, children ...*Node) *Node` (sets `title` and `border: true`)
+  - `Panel(title string, children ...*Node) *Node` (sets `title`, `border: true`, `padding: 1`)
   - `Scroll(children ...*Node) *Node`
   - `Overlay(children ...*Node) *Node`
-  - `Modal(id, title string, children ...*Node) *Node` (sets `border: true`, `modal: true`, `trap_focus: true`)
+  - `Modal(id, title string, children ...*Node) *Node` (sets `id`, `title`, `border: true`, `modal: true`)
   - `Spacer() *Node` (`Box().Grow(1)`)
 - **Primitives & Text**:
   - `Text(text string) *Node`
@@ -190,10 +190,16 @@ p := lugo.NewProgram(
 
 ### Chainable `*Node` Methods
 - **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond)`
-- **Dimensions & Flex**: `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`, `.Grow(g)`, `.Shrink(s)`, `.Flex(g)`, `.Padding(p)`, `.Gap(g)`, `.Align(a)`, `.Justify(j)`, `.ZIndex(z)`, `.Absolute(x, y)`
-- **Appearance**: `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.Border(bool)`, `.Bordered()`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Wrap(bool)`, `.Variant(v)`
-- **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Focusable(bool)`, `.Modal(bool)`, `.TrapFocus(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.PageSize(n)`
-- **Events & Keys**: `.OnClick(action)`, `.OnChange(action)`, `.OnSubmit(action)`, `.OnSelect(action)`, `.OnActivate(action)`, `.OnTimeout(action)`, `.Key(chord, action)`, `.Keymap(map[string]string)`
+- **Dimensions & Flex**: `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`, `.Grow(g)`, `.Shrink(s)`, `.Flex(g)`, `.Padding(p)`, `.Margin(m)`, `.Gap(g)`, `.Align(a)`, `.Justify(j)`, `.ZIndex(z)`, `.Absolute(left, top)`
+- **Appearance**: `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.Border(bool)`, `.Bordered()`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Italic(bool)`, `.Underline(bool)`, `.Wrap(bool)`
+- **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Modal(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.PageSize(n)`
+- **Events & Named Actions**: `.OnClick(action)`, `.OnChange(action)`, `.OnSubmit(action)`, `.OnSelect(action)`, `.OnTimeout(action)`, `.Key(chord, action)`, `.Keymap(map[string]string)`
+- **Zero-Boilerplate Inline Closures (Bubble Tea Killer)**:
+  - `.OnClickDo(func())` / `.OnClickErr(func() error)` — inline click handler without registering action names
+  - `.OnChangeText(func(newText string))` — live input text change closure
+  - `.OnSubmitText(func(submittedText string))` — input enter/submit closure
+  - `.OnSelectItem(func(index int, value any))` — list selection closure
+  - `.KeyDo(chord, func())` / `.KeyErr(chord, func() error)` — widget or container hotkey closure (automatically bubbles up container hierarchy)
 
 ---
 
@@ -224,9 +230,11 @@ Call from any goroutine while `p.Run()` is active:
 - `p.Quit()`
 
 ### Typed State Helpers on `*Runtime`
-- `rt.String(key) string`, `rt.Int(key) int`, `rt.Float(key) float64`, `rt.Bool(key) bool`, `rt.Model(key) any`
-- `rt.Set(key, val) error`, `rt.AddInt(key, delta) error`, `rt.ToggleBool(key) error`
-- `rt.On(action, handler) *Runtime`, `rt.Patch(id, props) error`, `rt.Replace(id, subtree) error`, `rt.ReconcileTree(root) error`
+- `rt.String(key, [fallback]) string`, `rt.Int(key, [fallback]) int`, `rt.Float(key, [fallback]) float64`, `rt.Bool(key, [fallback]) bool`
+- `rt.Strings(key) []string`, `rt.Map(key) map[string]any`, `rt.Model(key) any`
+- `rt.Set(key, val) error`, `rt.Update(patch map[string]any) error`, `rt.AddInt(key, delta) error`, `rt.ToggleBool(key) error`, `rt.Toggle(key) bool`
+- `rt.Quit() error` (returns `lugotui.ErrQuit` to exit cleanly), `rt.On(action, handler) *Runtime`
+- `rt.Patch(id, props) error`, `rt.Replace(id, subtree) error`, `rt.ReconcileTree(root) error`
 
 ---
 

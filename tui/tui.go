@@ -11,7 +11,10 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-var ErrPanicRecovered = runner.ErrPanicRecovered
+var (
+	ErrPanicRecovered = runner.ErrPanicRecovered
+	ErrQuit           = engine.ErrQuit
+)
 
 type Runtime struct{ runtime *engine.Runtime }
 
@@ -85,6 +88,23 @@ func LoadNamed(source, name string) (*Runtime, error) {
 	return &Runtime{runtime: r}, nil
 }
 
+func wrapGoActions(actions map[string]ActionHandler, wrapRuntime func(*engine.Runtime) *Runtime) map[string]func(*engine.Runtime, map[string]any) error {
+	if len(actions) == 0 {
+		return nil
+	}
+	goActions := make(map[string]func(*engine.Runtime, map[string]any) error, len(actions))
+	for name, fn := range actions {
+		if fn == nil {
+			continue
+		}
+		fnCopy := fn
+		goActions[name] = func(er *engine.Runtime, payload map[string]any) error {
+			return fnCopy(wrapRuntime(er), payload)
+		}
+	}
+	return goActions
+}
+
 func LoadView(root *Node, opts ...Option) (*Runtime, error) {
 	var o Options
 	for _, opt := range opts {
@@ -93,19 +113,13 @@ func LoadView(root *Node, opts ...Option) (*Runtime, error) {
 		}
 	}
 	var rt *Runtime
-	goActions := make(map[string]func(*engine.Runtime, map[string]any) error, len(o.Actions))
-	for name, fn := range o.Actions {
-		if fn == nil {
-			continue
+	wrapRuntime := func(er *engine.Runtime) *Runtime {
+		if rt == nil || rt.runtime != er {
+			rt = &Runtime{runtime: er}
 		}
-		fnCopy := fn
-		goActions[name] = func(er *engine.Runtime, payload map[string]any) error {
-			if rt == nil || rt.runtime != er {
-				rt = &Runtime{runtime: er}
-			}
-			return fnCopy(rt, payload)
-		}
+		return rt
 	}
+	goActions := wrapGoActions(o.Actions, wrapRuntime)
 	r, err := engine.LoadNode(root, o.InitialData, goActions, o.AllowHostActions || o.OnEvent != nil)
 	if err != nil {
 		return nil, err
@@ -126,24 +140,15 @@ func LoadViewFunc(fn ViewFunc, opts ...Option) (*Runtime, error) {
 		}
 	}
 	var rt *Runtime
-	goActions := make(map[string]func(*engine.Runtime, map[string]any) error, len(o.Actions))
-	for name, h := range o.Actions {
-		if h == nil {
-			continue
-		}
-		hCopy := h
-		goActions[name] = func(er *engine.Runtime, payload map[string]any) error {
-			if rt == nil || rt.runtime != er {
-				rt = &Runtime{runtime: er}
-			}
-			return hCopy(rt, payload)
-		}
-	}
-	r, err := engine.LoadViewFunc(func(er *engine.Runtime) *engine.Node {
+	wrapRuntime := func(er *engine.Runtime) *Runtime {
 		if rt == nil || rt.runtime != er {
 			rt = &Runtime{runtime: er}
 		}
-		return fn(rt)
+		return rt
+	}
+	goActions := wrapGoActions(o.Actions, wrapRuntime)
+	r, err := engine.LoadViewFunc(func(er *engine.Runtime) *engine.Node {
+		return fn(wrapRuntime(er))
 	}, o.InitialData, goActions, o.AllowHostActions || o.OnEvent != nil)
 	if err != nil {
 		return nil, err
@@ -240,6 +245,9 @@ func toRunnerOptions(options Options, control <-chan runner.ControlMsg) runner.O
 		DisablePanicRecovery: options.DisablePanicRecovery,
 		Control:              control,
 	}
+	if len(options.Middlewares) == 0 && len(options.Actions) > 0 {
+		opts.GoActions = wrapGoActions(options.Actions, wrapRuntime)
+	}
 	if options.ViewFunc != nil {
 		opts.ViewFunc = func(er *engine.Runtime) *engine.Node {
 			return options.ViewFunc(wrapRuntime(er))
@@ -328,54 +336,54 @@ func (r *Runtime) AltScreen() bool { return r.runtime.AltScreen }
 
 func (r *Runtime) Node(id string) *Node { return copyNode(r.runtime.Nodes[id]) }
 
-func (r *Runtime) Model(key string) any { return copyValue(r.runtime.Data[key]) }
+func (r *Runtime) Model(key string) any { return engine.CopyValue(r.runtime.Data[key]) }
 
 func (r *Runtime) Set(key string, value any) error {
 	return r.runtime.Set(key, value)
 }
 
-func (r *Runtime) String(key string) string {
-	v, _ := r.runtime.Data[key].(string)
-	return v
+func (r *Runtime) Update(patch map[string]any) error {
+	return r.runtime.Update(patch)
 }
 
-func (r *Runtime) Int(key string) int {
-	switch v := r.runtime.Data[key].(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	default:
-		return 0
-	}
+func (r *Runtime) String(key string, fallback ...string) string {
+	return r.runtime.String(key, fallback...)
 }
 
-func (r *Runtime) Float(key string) float64 {
-	switch v := r.runtime.Data[key].(type) {
-	case float64:
-		return v
-	case int:
-		return float64(v)
-	case int64:
-		return float64(v)
-	default:
-		return 0
-	}
+func (r *Runtime) Int(key string, fallback ...int) int {
+	return r.runtime.Int(key, fallback...)
 }
 
-func (r *Runtime) Bool(key string) bool {
-	v, _ := r.runtime.Data[key].(bool)
-	return v
+func (r *Runtime) Float(key string, fallback ...float64) float64 {
+	return r.runtime.Float(key, fallback...)
+}
+
+func (r *Runtime) Bool(key string, fallback ...bool) bool {
+	return r.runtime.Bool(key, fallback...)
+}
+
+func (r *Runtime) Strings(key string) []string {
+	return r.runtime.Strings(key)
+}
+
+func (r *Runtime) Map(key string) map[string]any {
+	return r.runtime.Map(key)
 }
 
 func (r *Runtime) AddInt(key string, delta int) error {
-	return r.Set(key, r.Int(key)+delta)
+	return r.runtime.AddInt(key, delta)
 }
 
 func (r *Runtime) ToggleBool(key string) error {
-	return r.Set(key, !r.Bool(key))
+	return r.runtime.ToggleBool(key)
+}
+
+func (r *Runtime) Toggle(key string) bool {
+	return r.runtime.Toggle(key)
+}
+
+func (r *Runtime) Quit() error {
+	return r.runtime.Quit()
 }
 
 func (r *Runtime) On(action string, handler ActionHandler) *Runtime {
@@ -389,7 +397,7 @@ func (r *Runtime) On(action string, handler ActionHandler) *Runtime {
 }
 
 func (r *Runtime) Emit(action string, payload any) {
-	r.runtime.Events = append(r.runtime.Events, HostEvent{Action: action, Payload: copyValue(payload)})
+	r.runtime.Events = append(r.runtime.Events, HostEvent{Action: action, Payload: engine.CopyValue(payload)})
 }
 
 func (r *Runtime) ReconcileTree(root *Node) error {
@@ -484,7 +492,10 @@ func (r *Runtime) Items(node *Node) []any {
 	if items == nil {
 		return nil
 	}
-	return copyValue(items).([]any)
+	if copied, ok := engine.CopyValue(items).([]any); ok {
+		return copied
+	}
+	return nil
 }
 
 func copyNode(node *Node) *Node {
@@ -493,33 +504,12 @@ func copyNode(node *Node) *Node {
 	}
 	copy := &Node{Type: node.Type, ID: node.ID, Rect: node.Rect, Clip: node.Clip}
 	if node.Props != nil {
-		copy.Props = copyValue(node.Props).(map[string]any)
+		if copied, ok := engine.CopyValue(node.Props).(map[string]any); ok {
+			copy.Props = copied
+		}
 	}
 	for _, child := range node.Children {
 		copy.Children = append(copy.Children, copyNode(child))
 	}
 	return copy
-}
-
-func copyValue(value any) any {
-	switch value := value.(type) {
-	case map[string]any:
-		copy := make(map[string]any, len(value))
-		for key, item := range value {
-			copy[key] = copyValue(item)
-		}
-		return copy
-	case []any:
-		copy := make([]any, len(value))
-		for i, item := range value {
-			copy[i] = copyValue(item)
-		}
-		return copy
-	case []string:
-		return append([]string(nil), value...)
-	case nil, string, bool, int, int64, float64:
-		return value
-	default:
-		return nil
-	}
 }
