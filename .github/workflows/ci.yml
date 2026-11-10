@@ -13,15 +13,15 @@ jobs:
         go: [minimum, stable]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - if: matrix.go == 'minimum'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
       - if: matrix.go == 'stable'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.0.0
         with:
           go-version: stable
       - name: Pure Go build and tests
@@ -39,7 +39,7 @@ jobs:
           GOTOOLCHAIN: local
         run: go test -race ./...
       - if: matrix.go == 'stable'
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - run: go run ./cmd/lugotui --check
       - run: go run ./cmd/lugotui --app internal/assets/demo.lua --check
 
@@ -50,10 +50,10 @@ jobs:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: stable
       - name: Native race and platform regressions
@@ -67,10 +67,10 @@ jobs:
   cross-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: stable
       - name: Validate all six release targets without publishing

@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Headless `FocusNext`/`FocusPrev` before initial `Draw` and staged `ui.focus_next`/`ui.focus_prev`/`ui.focus_direction` inside Lua actions.
 - Cleared stale `diagnostic` error banners on subsequent successful user input and preserved hardware cursor visibility when not overlapped by the bottom diagnostic row.
 - Fixed word-wrap edge cases with leading/trailing spaces in `LimitedLines`, `spans` newline offset tracking in `paintText`, and control/tab sanitization on `Paste`.
-- Validated static ELF linkage before entering `bubblewrap` in `--sandbox` mode and updated GitHub Actions workflow versions (`actions/checkout@v4`, `actions/setup-go@v5`, `govulncheck@latest`).
+- Validated static ELF linkage before entering `bubblewrap` in `--sandbox` mode and enforced `gofmt` verification in GitHub Actions CI.
 
 ### Security
 - Guarded Lua `string.rep` against OOM allocation bypass by enforcing the 1 MiB string limit (`maxText`) prior to allocation.

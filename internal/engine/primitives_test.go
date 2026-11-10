@@ -348,4 +348,3 @@ func TestTimerStopwatchPropagateAndRollbackOnChangeError(t *testing.T) {
 		t.Fatal("stopwatch running state was not rolled back after failed on_change")
 	}
 }
-

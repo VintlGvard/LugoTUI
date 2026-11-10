@@ -132,4 +132,3 @@ return {
 		t.Fatalf("Reload shared nested Data map with previous runtime: got %v", nested["k"])
 	}
 }
-

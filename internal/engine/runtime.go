@@ -465,4 +465,3 @@ func cloneLuaValue(L *lua.LState, v lua.LValue, depth int) lua.LValue {
 	})
 	return copyTbl
 }
-
