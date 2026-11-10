@@ -179,6 +179,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 	r.ReconcileFocus()
 	s.Clear()
 	s.HideCursor()
+	cursorY := -1
 	var paint func(*Node)
 	paint = func(n *Node) {
 		if flag(n, "hidden") || n.Clip.W == 0 || n.Clip.H == 0 {
@@ -354,6 +355,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 							p := r.primitive(n)
 							if mode != "blink" || !p.cursorBlinked {
 								s.ShowCursor(x, y)
+								cursorY = y
 							}
 						}
 					}
@@ -369,7 +371,9 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 		st := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorMaroon)
 		fill(s, Rect{0, h - 1, w, 1}, st)
 		put(s, 0, h-1, diagnostic, st, Rect{0, h - 1, w, 1})
-		s.HideCursor()
+		if cursorY == h-1 {
+			s.HideCursor()
+		}
 	}
 	s.Show()
 }

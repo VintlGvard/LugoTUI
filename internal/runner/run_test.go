@@ -513,3 +513,25 @@ func TestSandboxRejectsHostOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestDiagnosticClearsOnNextSuccessfulInput(t *testing.T) {
+	failNext := true
+	s, _ := startLoop(t, Options{ReservedKeys: testKeys(), OnEvent: func(_ *engine.Runtime, _ engine.HostEvent) error {
+		if failNext {
+			failNext = false
+			return errors.New("transient failure")
+		}
+		return nil
+	}}, nil)
+	s.PostEventWait(tcell.NewEventKey(tcell.KeyF1, 0, 0))
+	for {
+		if strings.Contains(receive(t, s.shows), "transient failure") {
+			break
+		}
+	}
+	s.PostEventWait(tcell.NewEventKey(tcell.KeyF1, 0, 0))
+	frame := receive(t, s.shows)
+	if strings.Contains(frame, "transient failure") {
+		t.Fatalf("diagnostic banner remained stuck after successful input: %q", frame)
+	}
+}

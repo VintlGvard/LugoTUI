@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,10 +42,7 @@ func RunCLI(args []string, buildVersion string) error {
 		flags.PrintDefaults()
 		fmt.Fprintln(flags.Output(), "\nExamples:\n  lugotui --app app.lua\n  lugotui --app app.lua --check\n  lugotui --app app.lua --snapshot\n  lugotui --sandbox --app app.lua --check")
 	}
-	var version *bool
-	if buildVersion != "" {
-		version = flags.Bool("version", false, "print version, commit, and Go version and exit")
-	}
+	version := flags.Bool("version", false, "print version, commit, and Go version and exit")
 	file := flags.String("app", "", "Lua application file (default: embedded demo)")
 	check := flags.Bool("check", false, "validate and render without terminal")
 	socket := flags.String("socket", "", "local agent Unix socket path (permissions 0600)")
@@ -56,17 +54,14 @@ func RunCLI(args []string, buildVersion string) error {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
-	if version != nil && *version {
+	if *version {
+		if buildVersion == "" {
+			buildVersion = "lugotui dev"
+		}
 		fmt.Println(buildVersion)
 		return nil
 	}
-	appFile := *file
-	if appFile == "" && !*check && !*snapshot {
-		if _, err := os.Stat("internal/assets/demo.lua"); err == nil {
-			appFile = "internal/assets/demo.lua"
-		}
-	}
-	return RunOptions(Options{AppFile: appFile, SocketPath: *socket, Check: *check, Snapshot: *snapshot, Sandbox: *sandbox})
+	return RunOptions(Options{AppFile: *file, SocketPath: *socket, Check: *check, Snapshot: *snapshot, Sandbox: *sandbox})
 }
 
 func RunOptions(options Options) error {
@@ -85,9 +80,9 @@ func RunOptions(options Options) error {
 	if err != nil {
 		return err
 	}
-	defer func() { r.Close() }()
 	r.Theme = options.Theme
 	if options.Check || options.Snapshot {
+		defer r.Close()
 		s := tcell.NewSimulationScreen("UTF-8")
 		if err = s.Init(); err != nil {
 			return err
@@ -108,9 +103,11 @@ func RunOptions(options Options) error {
 	}
 	screen, err := tcell.NewScreen()
 	if err != nil {
+		r.Close()
 		return err
 	}
 	if err = screen.Init(); err != nil {
+		r.Close()
 		return err
 	}
 	return runScreen(options, screen, r, loadSource)
@@ -289,12 +286,14 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 				return nil
 			}
 			err = nil
+			userAction := false
 			switch e := event.(type) {
 			case *tcell.EventPaste:
 				paste = e.Start()
 				if paste {
 					pasted.Reset()
 				} else {
+					userAction = true
 					err = r.Paste(pasted.String())
 					pasted.Reset()
 				}
@@ -318,12 +317,17 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 				if bindings[normalizeKey(e.Name())] == "reload" {
 					doReload()
 				} else {
+					userAction = true
 					err = r.Key(e)
 				}
 			case *tcell.EventMouse:
+				userAction = true
 				err = r.Mouse(e)
 			case *tcell.EventResize:
 				screen.Sync()
+			}
+			if userAction && err == nil {
+				diagnostic = ""
 			}
 			redraw = true
 		}
@@ -367,8 +371,8 @@ func reservedKeys(keys *ReservedKeys) (map[string]string, error) {
 	return bindings, nil
 }
 
-func validKeyName(name string) bool {
-	name = normalizeKey(name)
+var knownKeyNames = sync.OnceValue(func() map[string]bool {
+	set := make(map[string]bool, 16*len(tcell.KeyNames))
 	for bits := 0; bits < 16; bits++ {
 		var modifiers tcell.ModMask
 		for i, flag := range []tcell.ModMask{tcell.ModShift, tcell.ModCtrl, tcell.ModAlt, tcell.ModMeta} {
@@ -377,14 +381,30 @@ func validKeyName(name string) bool {
 			}
 		}
 		for key := range tcell.KeyNames {
-			if normalizeKey(tcell.NewEventKey(key, 0, modifiers).Name()) == name {
-				return true
-			}
+			set[normalizeKey(tcell.NewEventKey(key, 0, modifiers).Name())] = true
 		}
-		if start := strings.Index(name, "Rune["); start >= 0 && strings.HasSuffix(name, "]") {
-			runes := []rune(name[start+5 : len(name)-1])
-			if len(runes) == 1 && normalizeKey(tcell.NewEventKey(tcell.KeyRune, runes[0], modifiers).Name()) == name {
-				return true
+	}
+	return set
+})
+
+func validKeyName(name string) bool {
+	name = normalizeKey(name)
+	if knownKeyNames()[name] {
+		return true
+	}
+	if start := strings.Index(name, "Rune["); start >= 0 && strings.HasSuffix(name, "]") {
+		runes := []rune(name[start+5 : len(name)-1])
+		if len(runes) == 1 {
+			for bits := 0; bits < 16; bits++ {
+				var modifiers tcell.ModMask
+				for i, flag := range []tcell.ModMask{tcell.ModShift, tcell.ModCtrl, tcell.ModAlt, tcell.ModMeta} {
+					if bits&(1<<i) != 0 {
+						modifiers |= flag
+					}
+				}
+				if normalizeKey(tcell.NewEventKey(tcell.KeyRune, runes[0], modifiers).Name()) == name {
+					return true
+				}
 			}
 		}
 	}
