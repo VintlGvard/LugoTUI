@@ -39,6 +39,88 @@ func (theme Theme) style(n *Node, focused bool) tcell.Style {
 	return tcell.StyleDefault.Foreground(tcell.GetColor(str(n, "fg", fg))).Background(tcell.GetColor(str(n, "bg", theme.Background))).Bold(flag(n, "bold"))
 }
 
+type diffCell struct {
+	mainc rune
+	comb  string
+	style tcell.Style
+}
+
+type cellBuffer struct {
+	tcell.Screen
+	w, h       int
+	front      []diffCell
+	back       []diffCell
+	lastScreen tcell.Screen
+	forceAll   bool
+}
+
+func (cb *cellBuffer) begin(s tcell.Screen, w, h int) {
+	cb.Screen = s
+	w, h = max(0, w), max(0, h)
+	size := w * h
+	needReset := cb.lastScreen != s || cb.w != w || cb.h != h || len(cb.front) != size
+	if !needReset && size > 0 {
+		mc0, _, st0, _ := s.GetContent(0, 0)
+		mcN, _, stN, _ := s.GetContent(w-1, h-1)
+		if mc0 != cb.front[0].mainc || st0 != cb.front[0].style || mcN != cb.front[size-1].mainc || stN != cb.front[size-1].style {
+			needReset = true
+		}
+	}
+	if needReset {
+		cb.lastScreen = s
+		cb.w, cb.h = w, h
+		if cap(cb.front) < size {
+			cb.front = make([]diffCell, size)
+		} else {
+			cb.front = cb.front[:size]
+		}
+		if cap(cb.back) < size {
+			cb.back = make([]diffCell, size)
+		} else {
+			cb.back = cb.back[:size]
+		}
+		cb.forceAll = true
+		s.Clear()
+	} else {
+		cb.forceAll = false
+	}
+	empty := diffCell{mainc: ' ', style: tcell.StyleDefault}
+	for i := range cb.back {
+		cb.back[i] = empty
+	}
+}
+
+func (cb *cellBuffer) putCell(x, y int, mainc rune, comb string, st tcell.Style) {
+	if x >= 0 && x < cb.w && y >= 0 && y < cb.h {
+		cb.back[y*cb.w+x] = diffCell{mainc: mainc, comb: comb, style: st}
+	}
+}
+
+func (cb *cellBuffer) SetContent(x, y int, mainc rune, combc []rune, style tcell.Style) {
+	var comb string
+	if len(combc) > 0 {
+		comb = string(combc)
+	}
+	cb.putCell(x, y, mainc, comb, style)
+}
+
+func (cb *cellBuffer) flush(s tcell.Screen) {
+	if cb.w <= 0 || cb.h <= 0 {
+		return
+	}
+	for i, c := range cb.back {
+		if cb.forceAll || c != cb.front[i] {
+			cb.front[i] = c
+			x, y := i%cb.w, i/cb.w
+			var comb []rune
+			if c.comb != "" {
+				comb = []rune(c.comb)
+			}
+			s.SetContent(x, y, c.mainc, comb, c.style)
+		}
+	}
+}
+
 func isASCII(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] < 0x20 || s[i] >= 0x7f {
@@ -52,10 +134,15 @@ func put(s tcell.Screen, x, y int, text string, st tcell.Style, clip Rect) {
 	if y < clip.Y || y >= clip.Y+clip.H {
 		return
 	}
+	cb, isBuf := s.(*cellBuffer)
 	if isASCII(text) {
 		for i := 0; i < len(text); i++ {
 			if x >= clip.X && x < clip.X+clip.W {
-				s.SetContent(x, y, rune(text[i]), nil, st)
+				if isBuf {
+					cb.putCell(x, y, rune(text[i]), "", st)
+				} else {
+					s.SetContent(x, y, rune(text[i]), nil, st)
+				}
 			}
 			x++
 			if x >= clip.X+clip.W {
@@ -73,11 +160,19 @@ func put(s tcell.Screen, x, y int, text string, st tcell.Style, clip Rect) {
 		if x >= clip.X && x+w <= clip.X+clip.W {
 			cluster := g.Str()
 			first, size := utf8.DecodeRuneInString(cluster)
-			var comb []rune
-			if len(cluster) > size {
-				comb = []rune(cluster[size:])
+			if isBuf {
+				comb := ""
+				if len(cluster) > size {
+					comb = cluster[size:]
+				}
+				cb.putCell(x, y, first, comb, st)
+			} else {
+				var comb []rune
+				if len(cluster) > size {
+					comb = []rune(cluster[size:])
+				}
+				s.SetContent(x, y, first, comb, st)
 			}
-			s.SetContent(x, y, first, comb, st)
 		}
 		x += w
 		if x >= clip.X+clip.W {
@@ -88,11 +183,27 @@ func put(s tcell.Screen, x, y int, text string, st tcell.Style, clip Rect) {
 
 func putRune(s tcell.Screen, x, y int, r rune, st tcell.Style, clip Rect) {
 	if x >= clip.X && x < clip.X+clip.W && y >= clip.Y && y < clip.Y+clip.H {
-		s.SetContent(x, y, r, nil, st)
+		if cb, ok := s.(*cellBuffer); ok {
+			cb.putCell(x, y, r, "", st)
+		} else {
+			s.SetContent(x, y, r, nil, st)
+		}
 	}
 }
 
 func fill(s tcell.Screen, r Rect, st tcell.Style) {
+	if cb, ok := s.(*cellBuffer); ok {
+		x0, y0 := max(0, r.X), max(0, r.Y)
+		x1, y1 := min(cb.w, r.X+r.W), min(cb.h, r.Y+r.H)
+		cell := diffCell{mainc: ' ', style: st}
+		for y := y0; y < y1; y++ {
+			row := y * cb.w
+			for x := x0; x < x1; x++ {
+				cb.back[row+x] = cell
+			}
+		}
+		return
+	}
 	for y := r.Y; y < r.Y+r.H; y++ {
 		for x := r.X; x < r.X+r.W; x++ {
 			s.SetContent(x, y, ' ', nil, st)
@@ -129,55 +240,90 @@ func contentRect(n *Node) Rect {
 	return Rect{n.Rect.X + p, n.Rect.Y + p, max(0, n.Rect.W-2*p), max(0, n.Rect.H-2*p)}
 }
 
+func (r *Runtime) scrollDigest() uint64 {
+	var h uint64 = 14695981039346656037
+	for _, n := range r.Nodes {
+		if n.Type == "scroll" {
+			if st := r.State[n.ID]; st != nil {
+				h ^= uint64(st.Scroll) + 0x9e3779b97f4a7c15
+				h *= 1099511628211
+			}
+		}
+	}
+	return h
+}
+
 func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 	w, h := s.Size()
+	if r.Inline && r.InlineHeight > 0 && r.InlineHeight < h {
+		h = r.InlineHeight
+	}
+	sd := r.scrollDigest()
+	textChanged := false
 	var bindText func(*Node)
 	bindText = func(n *Node) {
-		n.layoutText, n.layoutBound = "", false
+		var bound string
+		var isBound bool
 		if n.Type == "text" || n.Type == "button" {
 			if key := str(n, "bind", ""); key != "" {
-				n.layoutText, n.layoutBound = r.Data[key].(string)
+				bound, isBound = r.Data[key].(string)
 			}
+		}
+		curText := str(n, "text", "")
+		if n.layoutText != bound || n.layoutBound != isBound || n.lastPropText != curText {
+			n.layoutText, n.layoutBound, n.lastPropText = bound, isBound, curText
+			textChanged = true
 		}
 		for _, child := range n.Children {
 			bindText(child)
 		}
 	}
 	bindText(r.Root)
-	Layout(r.Root, w, h)
-	var scrollLayout func(*Node)
-	scrollLayout = func(n *Node) {
-		if n.Type == "scroll" && r.State[n.ID] != nil {
-			cr := contentRect(n)
-			extent := max(cr.H, int(math.Ceil(measuredHeight(n, n.Rect.W)))-(n.Rect.H-cr.H))
-			viewport := n.Rect
-			viewport.H += extent - cr.H
-			place(n, viewport, n.Clip)
-			n.Rect.H -= extent - cr.H
-			content := contentRect(n)
-			viewportClip := intersect(content, n.Clip)
-			state := r.State[n.ID]
-			state.Scroll = max(0, min(state.Scroll, extent-cr.H))
-			var translate func(*Node, Rect)
-			translate = func(c *Node, parentClip Rect) {
-				c.Rect.Y -= state.Scroll
-				c.Clip = intersect(c.Rect, parentClip)
-				childClip := intersect(contentRect(c), c.Clip)
-				for _, ch := range c.Children {
-					translate(ch, childClip)
+	if textChanged || !r.layoutValid || r.lastLayoutW != w || r.lastLayoutH != h || r.lastLayoutRev != r.Revision || r.lastScrollDigest != sd {
+		Layout(r.Root, w, h)
+		var scrollLayout func(*Node)
+		scrollLayout = func(n *Node) {
+			if n.Type == "scroll" && r.State[n.ID] != nil {
+				cr := contentRect(n)
+				extent := max(cr.H, int(math.Ceil(measuredHeight(n, n.Rect.W)))-(n.Rect.H-cr.H))
+				viewport := n.Rect
+				viewport.H += extent - cr.H
+				place(n, viewport, n.Clip)
+				n.Rect.H -= extent - cr.H
+				content := contentRect(n)
+				viewportClip := intersect(content, n.Clip)
+				state := r.State[n.ID]
+				state.Scroll = max(0, min(state.Scroll, extent-cr.H))
+				var translate func(*Node, Rect)
+				translate = func(c *Node, parentClip Rect) {
+					c.Rect.Y -= state.Scroll
+					c.Clip = intersect(c.Rect, parentClip)
+					childClip := intersect(contentRect(c), c.Clip)
+					for _, ch := range c.Children {
+						translate(ch, childClip)
+					}
+				}
+				for _, c := range n.Children {
+					translate(c, viewportClip)
 				}
 			}
 			for _, c := range n.Children {
-				translate(c, viewportClip)
+				scrollLayout(c)
 			}
 		}
-		for _, c := range n.Children {
-			scrollLayout(c)
-		}
+		scrollLayout(r.Root)
+		r.layoutValid = true
+		r.lastLayoutW = w
+		r.lastLayoutH = h
+		r.lastLayoutRev = r.Revision
+		r.lastScrollDigest = r.scrollDigest()
 	}
-	scrollLayout(r.Root)
 	r.ReconcileFocus()
-	s.Clear()
+	if r.cellBuf == nil {
+		r.cellBuf = &cellBuffer{}
+	}
+	r.cellBuf.begin(s, w, h)
+	target := tcell.Screen(r.cellBuf)
 	s.HideCursor()
 	cursorY := -1
 	var paint func(*Node, tcell.Style)
@@ -188,28 +334,28 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 		st := r.Theme.style(n, r.Focus == n.ID)
 		forceFill := str(n, "position", "") == "absolute" || num(n, "z_index", 0) != 0 || flag(n, "modal")
 		if forceFill || st != bgStyle {
-			fill(s, n.Clip, st)
+			fill(target, n.Clip, st)
 		}
 		rect := n.Rect
 		if (flag(n, "border") || n.Type == "panel") && rect.W >= 2 && rect.H >= 2 {
-			putRune(s, rect.X, rect.Y, '┌', st, n.Clip)
-			putRune(s, rect.X+rect.W-1, rect.Y, '┐', st, n.Clip)
-			putRune(s, rect.X, rect.Y+rect.H-1, '└', st, n.Clip)
-			putRune(s, rect.X+rect.W-1, rect.Y+rect.H-1, '┘', st, n.Clip)
+			putRune(target, rect.X, rect.Y, '┌', st, n.Clip)
+			putRune(target, rect.X+rect.W-1, rect.Y, '┐', st, n.Clip)
+			putRune(target, rect.X, rect.Y+rect.H-1, '└', st, n.Clip)
+			putRune(target, rect.X+rect.W-1, rect.Y+rect.H-1, '┘', st, n.Clip)
 			for x := rect.X + 1; x < rect.X+rect.W-1; x++ {
-				putRune(s, x, rect.Y, '─', st, n.Clip)
-				putRune(s, x, rect.Y+rect.H-1, '─', st, n.Clip)
+				putRune(target, x, rect.Y, '─', st, n.Clip)
+				putRune(target, x, rect.Y+rect.H-1, '─', st, n.Clip)
 			}
 			for y := rect.Y + 1; y < rect.Y+rect.H-1; y++ {
-				putRune(s, rect.X, y, '│', st, n.Clip)
-				putRune(s, rect.X+rect.W-1, y, '│', st, n.Clip)
+				putRune(target, rect.X, y, '│', st, n.Clip)
+				putRune(target, rect.X+rect.W-1, y, '│', st, n.Clip)
 			}
-			put(s, rect.X+2, rect.Y, str(n, "title", ""), st, intersect(n.Clip, Rect{rect.X + 1, rect.Y, max(0, rect.W-2), 1}))
+			put(target, rect.X+2, rect.Y, str(n, "title", ""), st, intersect(n.Clip, Rect{rect.X + 1, rect.Y, max(0, rect.W-2), 1}))
 		}
 		cr := contentRect(n)
 		clip := intersect(cr, n.Clip)
 		state := r.State[n.ID]
-		if r.paintCollection(s, n, st, cr, clip) || r.paintPrimitive(s, n, st, cr, clip) {
+		if r.paintCollection(target, n, st, cr, clip) || r.paintPrimitive(target, n, st, cr, clip) {
 			for _, c := range sortedChildren(n) {
 				paint(c, st)
 			}
@@ -244,7 +390,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 					text = "[ " + text + " ]"
 				}
 			}
-			paintText(s, n, text, st, cr, clip)
+			paintText(target, n, text, st, cr, clip)
 		case "list":
 			if state != nil {
 				items := r.items(n)
@@ -261,8 +407,8 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 					if index == state.Selected {
 						ls = ls.Reverse(true)
 					}
-					fill(s, intersect(Rect{cr.X, cr.Y + y, cr.W, 1}, clip), ls)
-					put(s, cr.X, cr.Y+y, fmt.Sprint(items[index]), ls, clip)
+					fill(target, intersect(Rect{cr.X, cr.Y + y, cr.W, 1}, clip), ls)
+					put(target, cr.X, cr.Y+y, fmt.Sprint(items[index]), ls, clip)
 				}
 			}
 		case "input", "textarea":
@@ -303,7 +449,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 						if n.Type == "textarea" {
 							y -= state.Scroll
 						}
-						put(s, outer.X, y, editorLinePrefix(n, state.Value, logical), st, prefixClip)
+						put(target, outer.X, y, editorLinePrefix(n, state.Value, logical), st, prefixClip)
 						previousRow = p[1]
 					}
 					if i < len(gs) && gs[i] == "\n" {
@@ -311,7 +457,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 					}
 				}
 				if state.Value == "" {
-					paintText(s, n, editorDisplay(n, state), st.Dim(true), cr, clip)
+					paintText(target, n, editorDisplay(n, state), st.Dim(true), cr, clip)
 				}
 				start, end := 0, len(gs)
 				if n.Type == "textarea" {
@@ -333,7 +479,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 					if state.Anchor >= 0 && i >= min(state.Anchor, state.Cursor) && i < max(state.Anchor, state.Cursor) {
 						is = is.Reverse(true)
 					}
-					put(s, x, y, g, is, clip)
+					put(target, x, y, g, is, clip)
 				}
 				if suffix := editorSuggestion(n, state); suffix != "" && r.Focus == n.ID {
 					p := positions[len(gs)]
@@ -343,7 +489,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 					} else {
 						y -= state.Scroll
 					}
-					put(s, x, y, suffix, st.Dim(true), clip)
+					put(target, x, y, suffix, st.Dim(true), clip)
 				}
 				if r.Focus == n.ID {
 					x, y := cr.X+pos[0], cr.Y+pos[1]
@@ -372,12 +518,13 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 	paint(r.Root, tcell.StyleDefault)
 	if diagnostic != "" && h > 0 {
 		st := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorMaroon)
-		fill(s, Rect{0, h - 1, w, 1}, st)
-		put(s, 0, h-1, diagnostic, st, Rect{0, h - 1, w, 1})
+		fill(target, Rect{0, h - 1, w, 1}, st)
+		put(target, 0, h-1, diagnostic, st, Rect{0, h - 1, w, 1})
 		if cursorY == h-1 {
 			s.HideCursor()
 		}
 	}
+	r.cellBuf.flush(s)
 	s.Show()
 }
 
@@ -394,11 +541,29 @@ func plainText(n *Node) string {
 	return str(n, "text", str(n, "title", ""))
 }
 
+func (n *Node) cachedLines(text string, width int, wrap bool, limit int) []string {
+	if n != nil && n.linesCacheValid && n.linesCacheText == text && n.linesCacheWidth == width && n.linesCacheWrap == wrap && n.linesCacheLimit == limit {
+		return n.linesCache
+	}
+	lines := LimitedLines(text, width, wrap, limit)
+	if n != nil {
+		n.linesCacheText = text
+		n.linesCacheWidth = width
+		n.linesCacheWrap = wrap
+		n.linesCacheLimit = limit
+		n.linesCache = lines
+		n.linesCacheValid = true
+	}
+	return lines
+}
+
 func paintText(screen tcell.Screen, n *Node, text string, base tcell.Style, cr, clip Rect) {
-	styles := []tcell.Style{}
-	ends := []int{}
+	var styles []tcell.Style
+	var ends []int
 	total := 0
 	if spans, ok := n.Props["spans"].([]any); ok {
+		styles = make([]tcell.Style, 0, len(spans))
+		ends = make([]int, 0, len(spans))
 		for _, v := range spans {
 			m := v.(map[string]any)
 			st := base
@@ -420,7 +585,7 @@ func paintText(screen tcell.Screen, n *Node, text string, base tcell.Style, cr, 
 	}
 	offset := 0
 	spanIndex := 0
-	for y, line := range LimitedLines(text, cr.W, str(n, "wrap", "") != "none", max(0, clip.Y+clip.H-cr.Y)) {
+	for y, line := range n.cachedLines(text, cr.W, str(n, "wrap", "") != "none", max(0, clip.Y+clip.H-cr.Y)) {
 		if y >= cr.H {
 			break
 		}

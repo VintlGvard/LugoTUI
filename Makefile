@@ -1,4 +1,4 @@
-.PHONY: build run test check clean
+.PHONY: build run test race bench cover lint check clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -17,8 +17,23 @@ test:
 	go test -race ./...
 	go vet ./...
 
+race:
+	go test -race ./...
+
+bench:
+	go test -bench=Benchmark -benchmem ./internal/engine ./tui
+
+cover:
+	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out | tail -n 1
+
+lint:
+	test -z "$$(gofmt -l .)"
+	go vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run ./...; fi
+
 check: build
 	./lugotui --check
 
 clean:
-	rm -f -- lugotui
+	rm -f -- lugotui coverage.out

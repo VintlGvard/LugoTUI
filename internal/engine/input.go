@@ -606,6 +606,30 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 		s.Anchor = 0
 		s.Cursor = len(g)
 		return nil
+	case tcell.KeyCtrlC:
+		selected := s.Value
+		if s.Anchor >= 0 && s.Anchor != s.Cursor {
+			a, b := max(0, min(s.Anchor, s.Cursor)), min(len(g), max(s.Anchor, s.Cursor))
+			selected = strings.Join(g[a:b], "")
+		}
+		return r.ClipboardAdapter().Write(selected)
+	case tcell.KeyCtrlX:
+		if s.Anchor >= 0 && s.Anchor != s.Cursor {
+			a, b := max(0, min(s.Anchor, s.Cursor)), min(len(g), max(s.Anchor, s.Cursor))
+			if err := r.ClipboardAdapter().Write(strings.Join(g[a:b], "")); err != nil {
+				return err
+			}
+			editSave(s)
+			replaceSelection(s, "")
+			return r.changed(n, s)
+		}
+		return nil
+	case tcell.KeyCtrlV:
+		text, err := r.ClipboardAdapter().Read()
+		if err != nil || text == "" {
+			return err
+		}
+		return r.Paste(text)
 	case tcell.KeyCtrlZ:
 		if len(s.Undo) > 0 {
 			s.Redo = append(s.Redo, s.Value)
@@ -746,12 +770,18 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 }
 
 func (r *Runtime) changed(n *Node, s *WidgetState) error {
-	if b := str(n, "bind", ""); b != "" {
-		r.Data[b] = s.Value
+	var oldBound any
+	boundKey := str(n, "bind", "")
+	if boundKey != "" {
+		oldBound = r.Data[boundKey]
+		r.Data[boundKey] = s.Value
 	}
 	action := str(n, "on_change", "")
 	if action == "" {
 		r.Revision++
+		if boundKey != "" && !equalDataVal(oldBound, s.Value) {
+			r.notifyState(boundKey, oldBound, s.Value)
+		}
 		return nil
 	}
 	err := r.Action(action, map[string]any{"id": n.ID, "value": s.Value, "error": editorValidation(n, s.Value)})

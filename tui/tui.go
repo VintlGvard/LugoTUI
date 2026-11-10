@@ -2,12 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"github.com/VintlGvard/LugoTUI/internal/engine"
 	"github.com/VintlGvard/LugoTUI/internal/runner"
 	"github.com/gdamore/tcell/v2"
 )
+
+var ErrPanicRecovered = runner.ErrPanicRecovered
 
 type Runtime struct{ runtime *engine.Runtime }
 
@@ -24,6 +28,34 @@ type TaskResult = engine.TaskResult
 type NodeJSON = engine.NodeJSON
 
 type Theme = engine.Theme
+
+type Clipboard = engine.Clipboard
+
+type OSC52Clipboard = engine.OSC52Clipboard
+
+type StateObserver = engine.StateObserver
+
+type InputFilter func(tcell.Event) tcell.Event
+
+type EventHandler func(*Runtime, HostEvent) error
+
+type ActionHandler func(*Runtime, any) error
+
+type EventMiddleware func(EventHandler) EventHandler
+
+type Renderer interface {
+	Draw(screen tcell.Screen, rt *Runtime, diagnostic string)
+}
+
+type RendererFunc func(screen tcell.Screen, rt *Runtime, diagnostic string)
+
+func (f RendererFunc) Draw(screen tcell.Screen, rt *Runtime, diagnostic string) {
+	f(screen, rt, diagnostic)
+}
+
+func NewOSC52Clipboard(out io.Writer) *OSC52Clipboard {
+	return engine.NewOSC52Clipboard(out)
+}
 
 func DefaultTheme() Theme { return engine.DefaultTheme() }
 
@@ -54,36 +86,103 @@ func LoadNamed(source, name string) (*Runtime, error) {
 func Demo() string { return engine.Demo() }
 
 type Options struct {
-	Theme        Theme
-	OnEvent      func(*Runtime, HostEvent) error
-	ReservedKeys *ReservedKeys
-	AppFile      string
-	SocketPath   string
-	Check        bool
-	Snapshot     bool
-	Sandbox      bool
+	Theme                Theme
+	OnEvent              func(*Runtime, HostEvent) error
+	Middlewares          []EventMiddleware
+	InputFilter          InputFilter
+	StateObservers       []StateObserver
+	Renderer             Renderer
+	Clipboard            Clipboard
+	Screen               tcell.Screen
+	ReservedKeys         *ReservedKeys
+	AppFile              string
+	Source               string
+	SocketPath           string
+	Check                bool
+	Snapshot             bool
+	Sandbox              bool
+	Inline               bool
+	InlineHeight         int
+	AltScreen            *bool
+	Mouse                *bool
+	BracketedPaste       *bool
+	FPS                  int
+	DisablePanicRecovery bool
+	OnReady              func(*Runtime)
 }
 
 type ReservedKeys = runner.ReservedKeys
 
 func Run(args []string) error { return runner.Run(args) }
 
-func RunOptions(options Options) error {
+func toRunnerOptions(options Options, control <-chan runner.ControlMsg) runner.Options {
+	var wrapped *Runtime
+	wrapRuntime := func(r *engine.Runtime) *Runtime {
+		if wrapped == nil || wrapped.runtime != r {
+			wrapped = &Runtime{runtime: r}
+		}
+		return wrapped
+	}
 	opts := runner.Options{
-		Theme: options.Theme, ReservedKeys: options.ReservedKeys,
-		AppFile: options.AppFile, SocketPath: options.SocketPath,
-		Check: options.Check, Snapshot: options.Snapshot, Sandbox: options.Sandbox,
+		Theme:                options.Theme,
+		InputFilter:          options.InputFilter,
+		StateObservers:       options.StateObservers,
+		Clipboard:            options.Clipboard,
+		Screen:               options.Screen,
+		ReservedKeys:         options.ReservedKeys,
+		AppFile:              options.AppFile,
+		Source:               options.Source,
+		SocketPath:           options.SocketPath,
+		Check:                options.Check,
+		Snapshot:             options.Snapshot,
+		Sandbox:              options.Sandbox,
+		Inline:               options.Inline,
+		InlineHeight:         options.InlineHeight,
+		AltScreen:            options.AltScreen,
+		Mouse:                options.Mouse,
+		BracketedPaste:       options.BracketedPaste,
+		FPS:                  options.FPS,
+		DisablePanicRecovery: options.DisablePanicRecovery,
+		Control:              control,
 	}
 	if options.OnEvent != nil {
-		var wrapped *Runtime
 		opts.OnEvent = func(r *engine.Runtime, event engine.HostEvent) error {
-			if wrapped == nil || wrapped.runtime != r {
-				wrapped = &Runtime{runtime: r}
-			}
-			return options.OnEvent(wrapped, event)
+			return options.OnEvent(wrapRuntime(r), event)
 		}
 	}
-	return runner.RunOptions(opts)
+	if len(options.Middlewares) > 0 {
+		opts.Middlewares = make([]runner.EventMiddleware, 0, len(options.Middlewares))
+		for _, mw := range options.Middlewares {
+			if mw == nil {
+				continue
+			}
+			mwCopy := mw
+			opts.Middlewares = append(opts.Middlewares, func(next runner.EventHandler) runner.EventHandler {
+				wrappedNext := func(rt *Runtime, ev HostEvent) error {
+					return next(rt.runtime, ev)
+				}
+				chained := mwCopy(wrappedNext)
+				return func(er *engine.Runtime, ev engine.HostEvent) error {
+					return chained(wrapRuntime(er), ev)
+				}
+			})
+		}
+	}
+	if options.Renderer != nil {
+		opts.Renderer = engine.RendererFunc(func(screen tcell.Screen, er *engine.Runtime, diagnostic string) {
+			options.Renderer.Draw(screen, wrapRuntime(er), diagnostic)
+		})
+	}
+	if options.OnReady != nil {
+		opts.OnReady = func(er *engine.Runtime) {
+			options.OnReady(wrapRuntime(er))
+		}
+	}
+	return opts
+}
+
+func RunOptions(options Options) error {
+	return runner.RunOptions(toRunnerOptions(options, nil))
 }
 
 func (r *Runtime) Revision() uint64 { return r.runtime.Revision }
@@ -102,9 +201,67 @@ func (r *Runtime) Theme() Theme { return r.runtime.Theme }
 
 func (r *Runtime) SetTheme(theme Theme) { r.runtime.Theme = theme }
 
+func (r *Runtime) Clipboard() Clipboard { return r.runtime.ClipboardAdapter() }
+
+func (r *Runtime) SetClipboard(c Clipboard) { r.runtime.Clipboard = c }
+
+func (r *Runtime) AddStateObserver(obs StateObserver) {
+	if obs != nil {
+		r.runtime.StateObservers = append(r.runtime.StateObservers, obs)
+	}
+}
+
+func (r *Runtime) SetInline(inline bool, height int) {
+	r.runtime.Inline = inline
+	r.runtime.InlineHeight = height
+	r.runtime.AltScreen = !inline
+}
+
+func (r *Runtime) Inline() (bool, int) { return r.runtime.Inline, r.runtime.InlineHeight }
+
+func (r *Runtime) SetAltScreen(alt bool) {
+	r.runtime.AltScreen = alt
+	r.runtime.Inline = !alt
+}
+
+func (r *Runtime) AltScreen() bool { return r.runtime.AltScreen }
+
 func (r *Runtime) Node(id string) *Node { return copyNode(r.runtime.Nodes[id]) }
 
 func (r *Runtime) Model(key string) any { return copyValue(r.runtime.Data[key]) }
+
+func (r *Runtime) Set(key string, value any) error {
+	if r.runtime.L == nil {
+		return errors.New("runtime closed")
+	}
+	if r.runtime.Data == nil {
+		r.runtime.Data = map[string]any{}
+	}
+	oldVal := r.runtime.Data[key]
+	r.runtime.Data[key] = value
+	if err := engine.ValidateModel(r.runtime.Data); err != nil {
+		r.runtime.Data[key] = oldVal
+		return err
+	}
+	for id, n := range r.runtime.Nodes {
+		if (n.Type == "input" || n.Type == "textarea") && r.runtime.State[id] != nil {
+			if b, _ := n.Props["bind"].(string); b == key {
+				if s, ok := value.(string); ok {
+					r.runtime.State[id].Value = s
+					r.runtime.State[id].Cursor = min(r.runtime.State[id].Cursor, len([]rune(s)))
+					r.runtime.State[id].Anchor = -1
+				}
+			}
+		}
+	}
+	r.runtime.Revision++
+	for _, fn := range r.runtime.StateObservers {
+		if fn != nil {
+			fn(key, oldVal, value)
+		}
+	}
+	return nil
+}
 
 func (r *Runtime) State(id string) WidgetState {
 	s := r.runtime.State[id]

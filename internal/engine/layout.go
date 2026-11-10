@@ -14,14 +14,12 @@ func intersect(a, b Rect) Rect {
 }
 
 func size(n *Node, key string, parent int, fallback float64) float64 {
-	switch v := n.Props[key].(type) {
-	case float64:
-		return v
-	case string:
-		if strings.HasSuffix(v, "%") {
-			f, _ := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
-			return float64(parent) * f / 100
-		}
+	if f, ok := floatVal(n.Props[key]); ok {
+		return f
+	}
+	if v, ok := n.Props[key].(string); ok && strings.HasSuffix(v, "%") {
+		f, _ := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
+		return float64(parent) * f / 100
 	}
 	return fallback
 }

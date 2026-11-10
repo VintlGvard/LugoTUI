@@ -20,11 +20,18 @@ type Node struct {
 	Rect, Clip          Rect
 	layoutText          string
 	layoutBound         bool
+	lastPropText        string
 	intrinsicCache      [2]float64
 	intrinsicValid      bool
 	measuredWidth       int
 	measuredHeightCache float64
 	measuredValid       bool
+	linesCacheText      string
+	linesCacheWidth     int
+	linesCacheLimit     int
+	linesCacheWrap      bool
+	linesCacheValid     bool
+	linesCache          []string
 }
 
 type nodeError struct {

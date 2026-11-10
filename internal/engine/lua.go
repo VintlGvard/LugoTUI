@@ -22,11 +22,16 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 			chunkName = "<string>"
 		}
 	}
-	r := &Runtime{Nodes: map[string]*Node{}, State: map[string]*WidgetState{}, Data: map[string]any{}, ChunkName: chunkName}
+	r := &Runtime{Nodes: map[string]*Node{}, State: map[string]*WidgetState{}, Data: map[string]any{}, ChunkName: chunkName, AltScreen: true}
 	if old != nil {
 		r.Data = cloneData(old.Data)
 		r.Revision = old.Revision + 1
 		r.Theme = old.Theme
+		r.Clipboard = old.Clipboard
+		r.StateObservers = old.StateObservers
+		r.Inline = old.Inline
+		r.InlineHeight = old.InlineHeight
+		r.AltScreen = old.AltScreen
 	}
 	L := lua.NewState(lua.Options{SkipOpenLibs: true, CallStackSize: 128, RegistrySize: 1024, RegistryMaxSize: 8192, MinimizeStackMemory: true})
 	r.L = L
@@ -256,6 +261,37 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 			L.RaiseError("%s", e)
 		}
 		r.Data[key] = v
+		return 0
+	}))
+	L.SetField(ui, "clipboard_get", L.NewFunction(func(L *lua.LState) int {
+		text, err := r.ClipboardAdapter().Read()
+		if err != nil {
+			L.RaiseError("%s", err)
+		}
+		L.Push(lua.LString(text))
+		return 1
+	}))
+	L.SetField(ui, "clipboard_set", L.NewFunction(func(L *lua.LState) int {
+		text := L.CheckString(1)
+		if err := r.ClipboardAdapter().Write(text); err != nil {
+			L.RaiseError("%s", err)
+		}
+		return 0
+	}))
+	L.SetField(ui, "enter_alt_screen", L.NewFunction(func(_ *lua.LState) int {
+		r.AltScreen = true
+		r.Inline = false
+		if len(r.Events) < 256 {
+			r.Events = append(r.Events, HostEvent{Action: "__alt_screen", Payload: true})
+		}
+		return 0
+	}))
+	L.SetField(ui, "exit_alt_screen", L.NewFunction(func(_ *lua.LState) int {
+		r.AltScreen = false
+		r.Inline = true
+		if len(r.Events) < 256 {
+			r.Events = append(r.Events, HostEvent{Action: "__alt_screen", Payload: false})
+		}
 		return 0
 	}))
 	L.SetGlobal("ui", ui)

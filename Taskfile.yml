@@ -1,0 +1,64 @@
+version: '3'
+
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+  LDFLAGS: -s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}}
+
+tasks:
+  build:
+    desc: Build static lugotui binary
+    env:
+      CGO_ENABLED: '0'
+    cmds:
+      - go build -trimpath -ldflags='{{.LDFLAGS}}' -o lugotui ./cmd/lugotui
+
+  run:
+    desc: Run embedded demo application
+    env:
+      CGO_ENABLED: '0'
+    cmds:
+      - go run -ldflags='{{.LDFLAGS}}' ./cmd/lugotui --app internal/assets/demo.lua
+
+  test:
+    desc: Verify formatting, race-enabled tests, and go vet
+    cmds:
+      - test -z "$(gofmt -l .)"
+      - go test -race ./...
+      - go vet ./...
+
+  race:
+    desc: Run full test suite with race detector
+    cmds:
+      - go test -race ./...
+
+  bench:
+    desc: Run engine and TUI benchmarks with allocation statistics
+    cmds:
+      - go test -bench=Benchmark -benchmem ./internal/engine ./tui
+
+  cover:
+    desc: Run race-enabled coverage report
+    cmds:
+      - go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - go tool cover -func=coverage.out | tail -n 1
+
+  lint:
+    desc: Run formatting, go vet, and golangci-lint
+    cmds:
+      - test -z "$(gofmt -l .)"
+      - go vet ./...
+      - if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run ./...; fi
+
+  check:
+    desc: Build binary and validate headless layout
+    deps: [build]
+    cmds:
+      - ./lugotui --check
+
+  clean:
+    desc: Remove build and coverage artifacts
+    cmds:
+      - rm -f -- lugotui coverage.out

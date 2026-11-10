@@ -30,6 +30,17 @@ type Runtime struct {
 	tasks                          *taskState
 	stagedFocus                    *string
 	ChunkName                      string
+	Clipboard                      Clipboard
+	StateObservers                 []StateObserver
+	Inline                         bool
+	InlineHeight                   int
+	AltScreen                      bool
+	cellBuf                        *cellBuffer
+	layoutValid                    bool
+	lastLayoutW                    int
+	lastLayoutH                    int
+	lastLayoutRev                  uint64
+	lastScrollDigest               uint64
 }
 
 type HostEvent struct {
@@ -404,7 +415,40 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 	}
 	r.Revision++
 	committed = true
+	if len(r.StateObservers) > 0 {
+		for k, v := range r.Data {
+			if oldVal, exists := oldData[k]; !exists || !equalDataVal(oldVal, v) {
+				r.notifyState(k, oldVal, v)
+			}
+		}
+		for k, oldVal := range oldData {
+			if _, exists := r.Data[k]; !exists {
+				r.notifyState(k, oldVal, nil)
+			}
+		}
+	}
 	return nil
+}
+
+func equalDataVal(a, b any) bool {
+	switch av := a.(type) {
+	case nil:
+		return b == nil
+	case string:
+		bv, ok := b.(string)
+		return ok && av == bv
+	case float64:
+		bv, ok := b.(float64)
+		return ok && av == bv
+	case int:
+		bv, ok := b.(int)
+		return ok && av == bv
+	case bool:
+		bv, ok := b.(bool)
+		return ok && av == bv
+	default:
+		return false
+	}
 }
 
 func cloneData(src map[string]any) map[string]any {

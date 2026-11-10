@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -8,27 +9,71 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/VintlGvard/LugoTUI/internal/engine"
 	"github.com/gdamore/tcell/v2"
 )
 
+var ErrPanicRecovered = errors.New("lugotui: panic recovered")
+
 type ReservedKeys struct {
 	Quit   []string
 	Reload []string
 }
 
+type EventHandler func(*engine.Runtime, engine.HostEvent) error
+
+type EventMiddleware func(EventHandler) EventHandler
+
+type ControlKind int
+
+const (
+	ControlAction ControlKind = iota
+	ControlSet
+	ControlPatch
+	ControlReload
+	ControlQuit
+	ControlAltScreen
+)
+
+type ControlMsg struct {
+	Kind      ControlKind
+	Action    string
+	Payload   map[string]any
+	Key       string
+	Value     any
+	ID        string
+	Props     map[string]any
+	AltScreen bool
+	Reply     chan error
+}
+
 type Options struct {
-	Theme        engine.Theme
-	OnEvent      func(*engine.Runtime, engine.HostEvent) error
-	ReservedKeys *ReservedKeys
-	AppFile      string
-	SocketPath   string
-	Check        bool
-	Snapshot     bool
-	Sandbox      bool
+	Theme                engine.Theme
+	OnEvent              func(*engine.Runtime, engine.HostEvent) error
+	Middlewares          []EventMiddleware
+	InputFilter          func(tcell.Event) tcell.Event
+	StateObservers       []engine.StateObserver
+	Renderer             engine.Renderer
+	Clipboard            engine.Clipboard
+	Screen               tcell.Screen
+	ReservedKeys         *ReservedKeys
+	AppFile              string
+	Source               string
+	SocketPath           string
+	Check                bool
+	Snapshot             bool
+	Sandbox              bool
+	Inline               bool
+	InlineHeight         int
+	AltScreen            *bool
+	Mouse                *bool
+	BracketedPaste       *bool
+	FPS                  int
+	DisablePanicRecovery bool
+	Control              <-chan ControlMsg
+	OnReady              func(*engine.Runtime)
 }
 
 func Run(args []string) error {
@@ -64,6 +109,33 @@ func RunCLI(args []string, buildVersion string) error {
 	return RunOptions(Options{AppFile: *file, SocketPath: *socket, Check: *check, Snapshot: *snapshot, Sandbox: *sandbox})
 }
 
+func applyRuntimeOptions(r *engine.Runtime, options Options) {
+	r.Theme = options.Theme
+	if options.Clipboard != nil {
+		r.Clipboard = options.Clipboard
+	} else if r.Clipboard == nil {
+		r.Clipboard = engine.NewOSC52Clipboard(os.Stderr)
+	}
+	if len(options.StateObservers) > 0 {
+		r.StateObservers = append([]engine.StateObserver(nil), options.StateObservers...)
+	}
+	r.Inline = options.Inline
+	r.InlineHeight = options.InlineHeight
+	if options.AltScreen != nil {
+		r.AltScreen = *options.AltScreen
+	} else {
+		r.AltScreen = !options.Inline
+	}
+}
+
+func drawRuntime(options Options, screen tcell.Screen, r *engine.Runtime, diagnostic string) {
+	if options.Renderer != nil {
+		options.Renderer.Draw(screen, r, diagnostic)
+		return
+	}
+	r.Draw(screen, diagnostic)
+}
+
 func RunOptions(options Options) error {
 	if _, err := reservedKeys(options.ReservedKeys); err != nil {
 		return err
@@ -71,7 +143,15 @@ func RunOptions(options Options) error {
 	if options.Sandbox {
 		return Sandbox(options)
 	}
-	loadSource := func() (string, error) { return readSource(options.AppFile) }
+	loadSource := func() (string, error) {
+		if options.Source != "" {
+			if len(options.Source) > 1<<20 {
+				return "", fmt.Errorf("application source exceeds 1 MiB")
+			}
+			return options.Source, nil
+		}
+		return readSource(options.AppFile)
+	}
 	source, err := loadSource()
 	if err != nil {
 		return err
@@ -80,7 +160,7 @@ func RunOptions(options Options) error {
 	if err != nil {
 		return err
 	}
-	r.Theme = options.Theme
+	applyRuntimeOptions(r, options)
 	if options.Check || options.Snapshot {
 		defer r.Close()
 		s := tcell.NewSimulationScreen("UTF-8")
@@ -89,7 +169,7 @@ func RunOptions(options Options) error {
 		}
 		defer s.Fini()
 		s.SetSize(100, 30)
-		r.Draw(s, "")
+		drawRuntime(options, s, r, "")
 		if options.Snapshot {
 			b, e := r.Snapshot()
 			if e != nil {
@@ -101,14 +181,17 @@ func RunOptions(options Options) error {
 		}
 		return nil
 	}
-	screen, err := tcell.NewScreen()
-	if err != nil {
-		r.Close()
-		return err
-	}
-	if err = screen.Init(); err != nil {
-		r.Close()
-		return err
+	screen := options.Screen
+	if screen == nil {
+		screen, err = tcell.NewScreen()
+		if err != nil {
+			r.Close()
+			return err
+		}
+		if err = screen.Init(); err != nil {
+			r.Close()
+			return err
+		}
 	}
 	return runScreen(options, screen, r, loadSource)
 }
@@ -133,15 +216,49 @@ func readSource(path string) (string, error) {
 	return string(data), nil
 }
 
-func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSource func() (string, error)) error {
-	defer screen.Fini()
+func buildEventHandler(options Options) EventHandler {
+	base := options.OnEvent
+	if base == nil {
+		base = func(*engine.Runtime, engine.HostEvent) error { return nil }
+	}
+	h := EventHandler(base)
+	for i := len(options.Middlewares) - 1; i >= 0; i-- {
+		if mw := options.Middlewares[i]; mw != nil {
+			h = mw(h)
+		}
+	}
+	return h
+}
+
+func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSource func() (string, error)) (runErr error) {
+	defer func() {
+		screen.HideCursor()
+		screen.DisableMouse()
+		screen.DisablePaste()
+		screen.Fini()
+	}()
 	defer func() { r.Close() }()
+	if !options.DisablePanicRecovery {
+		defer func() {
+			if rec := recover(); rec != nil {
+				runErr = fmt.Errorf("%w: %v", ErrPanicRecovered, rec)
+			}
+		}()
+	}
 	bindings, err := reservedKeys(options.ReservedKeys)
 	if err != nil {
 		return err
 	}
-	screen.EnableMouse(tcell.MouseDragEvents)
-	screen.EnablePaste()
+	applyRuntimeOptions(r, options)
+	if options.Mouse == nil || *options.Mouse {
+		screen.EnableMouse(tcell.MouseDragEvents)
+	}
+	if options.BracketedPaste == nil || *options.BracketedPaste {
+		screen.EnablePaste()
+	}
+	if options.OnReady != nil {
+		options.OnReady(r)
+	}
 	events := make(chan tcell.Event, 32)
 	done := make(chan struct{})
 	requests := make(chan engine.AgentRequest, 4)
@@ -162,7 +279,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 	var pasted strings.Builder
 	go screen.ChannelEvents(events, done)
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	notifySignals(signals)
 	defer signal.Stop(signals)
 	diagnostic := ""
 	pending := make(chan struct{}, 1)
@@ -201,6 +318,9 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		}()
 	}
 	doReload := func() {
+		if readSource == nil {
+			return
+		}
 		var source string
 		source, err = readSource()
 		if err == nil {
@@ -209,12 +329,15 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 			if err == nil {
 				r.Close()
 				r = candidate
+				applyRuntimeOptions(r, options)
 				diagnostic = ""
 			}
 		}
 	}
+	hasEventHandler := options.OnEvent != nil || len(options.Middlewares) > 0
+	eventHandler := buildEventHandler(options)
 	dispatch := func() bool {
-		if options.OnEvent == nil {
+		if !hasEventHandler {
 			if options.SocketPath == "" {
 				r.DrainEvents()
 			}
@@ -222,7 +345,15 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		}
 		batch := r.DrainEvents()
 		for _, event := range batch {
-			if e := options.OnEvent(r, event); e != nil {
+			if event.Action == "__alt_screen" {
+				if enter, ok := event.Payload.(bool); ok {
+					r.AltScreen = enter
+					r.Inline = !enter
+					screen.Sync()
+				}
+				continue
+			}
+			if e := eventHandler(r, event); e != nil {
 				diagnostic = e.Error()
 			}
 		}
@@ -235,7 +366,11 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		return len(batch) != 0
 	}
 	dispatch()
-	r.Draw(screen, diagnostic)
+	drawRuntime(options, screen, r, diagnostic)
+	tickInterval := 16 * time.Millisecond
+	if options.FPS > 0 && options.FPS <= 240 {
+		tickInterval = time.Second / time.Duration(options.FPS)
+	}
 	var ticker *time.Ticker
 	var ticks <-chan time.Time
 	defer func() {
@@ -246,7 +381,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 	for {
 		if r.NeedsTick() {
 			if ticker == nil {
-				ticker = time.NewTicker(16 * time.Millisecond)
+				ticker = time.NewTicker(tickInterval)
 				ticks = ticker.C
 			}
 		} else if ticker != nil {
@@ -257,8 +392,13 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		redraw := false
 		err = nil
 		select {
-		case <-signals:
-			return nil
+		case sig := <-signals:
+			if isResizeSignal(sig) {
+				screen.Sync()
+				redraw = true
+			} else {
+				return nil
+			}
 		case <-fileChanges:
 			doReload()
 			redraw = true
@@ -271,19 +411,88 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		case <-pending:
 		case result := <-r.TaskResults():
 			err = r.HandleTask(result)
+		case msg := <-options.Control:
+			var ctrlErr error
+			switch msg.Kind {
+			case ControlQuit:
+				if msg.Reply != nil {
+					msg.Reply <- nil
+				}
+				return nil
+			case ControlReload:
+				doReload()
+				ctrlErr = err
+				redraw = true
+			case ControlAction:
+				ctrlErr = r.Action(msg.Action, msg.Payload)
+				if ctrlErr == nil {
+					diagnostic = ""
+				}
+				redraw = true
+			case ControlSet:
+				if r.Data == nil {
+					r.Data = map[string]any{}
+				}
+				oldVal := r.Data[msg.Key]
+				r.Data[msg.Key] = msg.Value
+				if ctrlErr = engine.ValidateModel(r.Data); ctrlErr != nil {
+					r.Data[msg.Key] = oldVal
+				} else {
+					for id, n := range r.Nodes {
+						if (n.Type == "input" || n.Type == "textarea") && r.State[id] != nil {
+							if b, _ := n.Props["bind"].(string); b == msg.Key {
+								if s, ok := msg.Value.(string); ok {
+									r.State[id].Value = s
+									r.State[id].Cursor = min(r.State[id].Cursor, len([]rune(s)))
+									r.State[id].Anchor = -1
+								}
+							}
+						}
+					}
+					r.Revision++
+					for _, fn := range r.StateObservers {
+						if fn != nil {
+							fn(msg.Key, oldVal, msg.Value)
+						}
+					}
+					diagnostic = ""
+					redraw = true
+				}
+			case ControlPatch:
+				ctrlErr = r.Patch(msg.ID, msg.Props)
+				if ctrlErr == nil {
+					diagnostic = ""
+				}
+				redraw = true
+			case ControlAltScreen:
+				r.AltScreen = msg.AltScreen
+				r.Inline = !msg.AltScreen
+				screen.Sync()
+				redraw = true
+			}
+			if msg.Reply != nil {
+				msg.Reply <- ctrlErr
+			}
+			err = ctrlErr
 		case request := <-requests:
 			var queued []engine.HostEvent
-			if options.OnEvent != nil {
+			if hasEventHandler {
 				queued, r.Events = r.Events, nil
 			}
 			reply := r.AgentReply(request.Data)
-			if options.OnEvent != nil {
+			if hasEventHandler {
 				r.Events = append(queued, r.Events...)
 			}
 			request.Reply <- reply
 		case event := <-events:
 			if event == nil {
 				return nil
+			}
+			if options.InputFilter != nil {
+				event = options.InputFilter(event)
+				if event == nil {
+					continue
+				}
 			}
 			err = nil
 			userAction := false
@@ -336,7 +545,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		}
 		called := dispatch()
 		if redraw || called || revision != r.Revision || focus != r.Focus || previousDiagnostic != diagnostic {
-			r.Draw(screen, diagnostic)
+			drawRuntime(options, screen, r, diagnostic)
 		}
 	}
 }
