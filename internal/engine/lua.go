@@ -32,6 +32,9 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 		r.Inline = old.Inline
 		r.InlineHeight = old.InlineHeight
 		r.AltScreen = old.AltScreen
+		r.GoActions = cloneGoActions(old.GoActions)
+		r.AllowHostActions = old.AllowHostActions
+		r.ViewFunc = old.ViewFunc
 	}
 	L := lua.NewState(lua.Options{SkipOpenLibs: true, CallStackSize: 128, RegistrySize: 1024, RegistryMaxSize: 8192, MinimizeStackMemory: true})
 	r.L = L

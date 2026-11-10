@@ -41,6 +41,8 @@ type EventHandler func(*Runtime, HostEvent) error
 
 type ActionHandler func(*Runtime, any) error
 
+type ViewFunc func(*Runtime) *Node
+
 type EventMiddleware func(EventHandler) EventHandler
 
 type Renderer interface {
@@ -83,10 +85,100 @@ func LoadNamed(source, name string) (*Runtime, error) {
 	return &Runtime{runtime: r}, nil
 }
 
+func LoadView(root *Node, opts ...Option) (*Runtime, error) {
+	var o Options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	var rt *Runtime
+	goActions := make(map[string]func(*engine.Runtime, map[string]any) error, len(o.Actions))
+	for name, fn := range o.Actions {
+		if fn == nil {
+			continue
+		}
+		fnCopy := fn
+		goActions[name] = func(er *engine.Runtime, payload map[string]any) error {
+			if rt == nil || rt.runtime != er {
+				rt = &Runtime{runtime: er}
+			}
+			return fnCopy(rt, payload)
+		}
+	}
+	r, err := engine.LoadNode(root, o.InitialData, goActions, o.AllowHostActions || o.OnEvent != nil)
+	if err != nil {
+		return nil, err
+	}
+	rt = &Runtime{runtime: r}
+	applyOptionsToRuntime(rt, o)
+	return rt, nil
+}
+
+func LoadViewFunc(fn ViewFunc, opts ...Option) (*Runtime, error) {
+	if fn == nil {
+		return nil, errors.New("nil view function")
+	}
+	var o Options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	var rt *Runtime
+	goActions := make(map[string]func(*engine.Runtime, map[string]any) error, len(o.Actions))
+	for name, h := range o.Actions {
+		if h == nil {
+			continue
+		}
+		hCopy := h
+		goActions[name] = func(er *engine.Runtime, payload map[string]any) error {
+			if rt == nil || rt.runtime != er {
+				rt = &Runtime{runtime: er}
+			}
+			return hCopy(rt, payload)
+		}
+	}
+	r, err := engine.LoadViewFunc(func(er *engine.Runtime) *engine.Node {
+		if rt == nil || rt.runtime != er {
+			rt = &Runtime{runtime: er}
+		}
+		return fn(rt)
+	}, o.InitialData, goActions, o.AllowHostActions || o.OnEvent != nil)
+	if err != nil {
+		return nil, err
+	}
+	rt = &Runtime{runtime: r}
+	applyOptionsToRuntime(rt, o)
+	return rt, nil
+}
+
+func applyOptionsToRuntime(rt *Runtime, o Options) {
+	if o.Theme != (Theme{}) {
+		rt.SetTheme(o.Theme)
+	}
+	if o.Clipboard != nil {
+		rt.SetClipboard(o.Clipboard)
+	}
+	for _, obs := range o.StateObservers {
+		rt.AddStateObserver(obs)
+	}
+	if o.Inline {
+		rt.SetInline(true, o.InlineHeight)
+	} else if o.AltScreen != nil {
+		rt.SetAltScreen(*o.AltScreen)
+	}
+}
+
 func Demo() string { return engine.Demo() }
 
 type Options struct {
 	Theme                Theme
+	View                 *Node
+	ViewFunc             ViewFunc
+	InitialData          map[string]any
+	Actions              map[string]ActionHandler
+	AllowHostActions     bool
 	OnEvent              func(*Runtime, HostEvent) error
 	Middlewares          []EventMiddleware
 	InputFilter          InputFilter
@@ -125,6 +217,9 @@ func toRunnerOptions(options Options, control <-chan runner.ControlMsg) runner.O
 	}
 	opts := runner.Options{
 		Theme:                options.Theme,
+		View:                 options.View,
+		InitialData:          options.InitialData,
+		AllowHostActions:     options.AllowHostActions || options.OnEvent != nil || len(options.Actions) > 0 || options.View != nil || options.ViewFunc != nil,
 		InputFilter:          options.InputFilter,
 		StateObservers:       options.StateObservers,
 		Clipboard:            options.Clipboard,
@@ -144,6 +239,11 @@ func toRunnerOptions(options Options, control <-chan runner.ControlMsg) runner.O
 		FPS:                  options.FPS,
 		DisablePanicRecovery: options.DisablePanicRecovery,
 		Control:              control,
+	}
+	if options.ViewFunc != nil {
+		opts.ViewFunc = func(er *engine.Runtime) *engine.Node {
+			return options.ViewFunc(wrapRuntime(er))
+		}
 	}
 	if options.OnEvent != nil {
 		opts.OnEvent = func(r *engine.Runtime, event engine.HostEvent) error {
@@ -231,36 +331,69 @@ func (r *Runtime) Node(id string) *Node { return copyNode(r.runtime.Nodes[id]) }
 func (r *Runtime) Model(key string) any { return copyValue(r.runtime.Data[key]) }
 
 func (r *Runtime) Set(key string, value any) error {
-	if r.runtime.L == nil {
-		return errors.New("runtime closed")
+	return r.runtime.Set(key, value)
+}
+
+func (r *Runtime) String(key string) string {
+	v, _ := r.runtime.Data[key].(string)
+	return v
+}
+
+func (r *Runtime) Int(key string) int {
+	switch v := r.runtime.Data[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
 	}
-	if r.runtime.Data == nil {
-		r.runtime.Data = map[string]any{}
+}
+
+func (r *Runtime) Float(key string) float64 {
+	switch v := r.runtime.Data[key].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	default:
+		return 0
 	}
-	oldVal := r.runtime.Data[key]
-	r.runtime.Data[key] = value
-	if err := engine.ValidateModel(r.runtime.Data); err != nil {
-		r.runtime.Data[key] = oldVal
-		return err
+}
+
+func (r *Runtime) Bool(key string) bool {
+	v, _ := r.runtime.Data[key].(bool)
+	return v
+}
+
+func (r *Runtime) AddInt(key string, delta int) error {
+	return r.Set(key, r.Int(key)+delta)
+}
+
+func (r *Runtime) ToggleBool(key string) error {
+	return r.Set(key, !r.Bool(key))
+}
+
+func (r *Runtime) On(action string, handler ActionHandler) *Runtime {
+	if handler == nil {
+		return r
 	}
-	for id, n := range r.runtime.Nodes {
-		if (n.Type == "input" || n.Type == "textarea") && r.runtime.State[id] != nil {
-			if b, _ := n.Props["bind"].(string); b == key {
-				if s, ok := value.(string); ok {
-					r.runtime.State[id].Value = s
-					r.runtime.State[id].Cursor = min(r.runtime.State[id].Cursor, len([]rune(s)))
-					r.runtime.State[id].Anchor = -1
-				}
-			}
-		}
-	}
-	r.runtime.Revision++
-	for _, fn := range r.runtime.StateObservers {
-		if fn != nil {
-			fn(key, oldVal, value)
-		}
-	}
-	return nil
+	r.runtime.RegisterAction(action, func(er *engine.Runtime, payload map[string]any) error {
+		return handler(r, payload)
+	})
+	return r
+}
+
+func (r *Runtime) Emit(action string, payload any) {
+	r.runtime.Events = append(r.runtime.Events, HostEvent{Action: action, Payload: copyValue(payload)})
+}
+
+func (r *Runtime) ReconcileTree(root *Node) error {
+	return r.runtime.ReconcileTree(root)
 }
 
 func (r *Runtime) State(id string) WidgetState {

@@ -9,8 +9,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-
-	lua "github.com/yuin/gopher-lua"
 )
 
 type Node struct {
@@ -379,7 +377,7 @@ func (r *Runtime) validateActions() error {
 	for n := range ordered(r.Root) {
 		for _, key := range []string{"on_click", "on_select", "on_submit", "on_change", "on_navigate", "on_timeout", "on_key"} {
 			if action := str(n, key, ""); action != "" {
-				if r.actions == nil || r.actions.RawGetString(action).Type() != lua.LTFunction {
+				if !r.hasAction(action) {
 					return &nodeError{Node: n, Property: key, Err: errors.New("unknown action: " + action)}
 				}
 			}
@@ -387,7 +385,7 @@ func (r *Runtime) validateActions() error {
 		if km, ok := n.Props["keymap"].(map[string]any); ok {
 			for key, action := range km {
 				if s, ok := action.(string); ok && s != "" {
-					if r.actions == nil || r.actions.RawGetString(s).Type() != lua.LTFunction {
+					if !r.hasAction(s) {
 						return &nodeError{Node: n, Property: "keymap", Err: fmt.Errorf("unknown action: %s (key %q)", s, key)}
 					}
 				}
@@ -398,16 +396,72 @@ func (r *Runtime) validateActions() error {
 			for _, value := range keys {
 				binding, _ := value.(map[string]any)
 				action, _ := binding["action"].(string)
-				if action != "" && (r.actions == nil || r.actions.RawGetString(action).Type() != lua.LTFunction) {
+				if action != "" && !r.hasAction(action) {
 					return &nodeError{Node: n, Property: "keys", Err: errors.New("unknown action: " + action)}
 				}
 			}
 		}
 	}
 	for key, action := range r.keymap {
-		if r.actions == nil || r.actions.RawGetString(action).Type() != lua.LTFunction {
+		if !r.hasAction(action) {
 			return fmt.Errorf("unknown keymap action: %s (key %q)", action, key)
 		}
 	}
 	return nil
+}
+
+func AutoAssignIDs(root *Node) {
+	if root == nil {
+		return
+	}
+	used := map[string]bool{}
+	seenCollect := map[*Node]bool{}
+	var collect func(*Node, int)
+	collect = func(n *Node, depth int) {
+		if n == nil || depth > 64 || seenCollect[n] {
+			return
+		}
+		seenCollect[n] = true
+		if n.ID != "" {
+			used[n.ID] = true
+		}
+		for _, c := range n.Children {
+			collect(c, depth+1)
+		}
+	}
+	collect(root, 0)
+
+	seenAssign := map[*Node]bool{}
+	var assign func(*Node, string, int, int)
+	assign = func(n *Node, parentID string, idx int, depth int) {
+		if n == nil || depth > 64 || seenAssign[n] {
+			return
+		}
+		seenAssign[n] = true
+		if n.Props == nil {
+			n.Props = map[string]any{}
+		}
+		if n.ID == "" {
+			base := "root"
+			if parentID != "" {
+				suffix := fmt.Sprintf("%s_%d", n.Type, idx)
+				if b, ok := n.Props["bind"].(string); ok && b != "" {
+					suffix = n.Type + "_" + b
+				} else if act, ok := n.Props["on_click"].(string); ok && act != "" {
+					suffix = n.Type + "_" + act
+				}
+				base = parentID + "." + suffix
+			}
+			candidate := base
+			for seq := 2; used[candidate]; seq++ {
+				candidate = fmt.Sprintf("%s_%d", base, seq)
+			}
+			n.ID = candidate
+			used[candidate] = true
+		}
+		for i, c := range n.Children {
+			assign(c, n.ID, i, depth+1)
+		}
+	}
+	assign(root, "", 0, 0)
 }

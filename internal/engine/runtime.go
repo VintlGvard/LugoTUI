@@ -35,6 +35,11 @@ type Runtime struct {
 	Inline                         bool
 	InlineHeight                   int
 	AltScreen                      bool
+	closed                         bool
+	inAction                       bool
+	GoActions                      map[string]func(*Runtime, map[string]any) error
+	AllowHostActions               bool
+	ViewFunc                       func(*Runtime) *Node
 	cellBuf                        *cellBuffer
 	layoutValid                    bool
 	lastLayoutW                    int
@@ -48,27 +53,264 @@ type HostEvent struct {
 	Payload any    `json:"payload"`
 }
 
+func (r *Runtime) isClosed() bool { return r == nil || r.closed }
+
+func (r *Runtime) hasLuaAction(name string) bool {
+	return r.actions != nil && r.actions.RawGetString(name).Type() == lua.LTFunction
+}
+
+func (r *Runtime) hasGoAction(name string) bool {
+	return r.GoActions != nil && r.GoActions[name] != nil
+}
+
+func (r *Runtime) hasAction(name string) bool {
+	if name == "" {
+		return false
+	}
+	return r.hasLuaAction(name) || r.hasGoAction(name) || r.AllowHostActions
+}
+
+func cloneGoActions(src map[string]func(*Runtime, map[string]any) error) map[string]func(*Runtime, map[string]any) error {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]func(*Runtime, map[string]any) error, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+func (r *Runtime) RegisterAction(name string, fn func(*Runtime, map[string]any) error) {
+	if name == "" || fn == nil {
+		return
+	}
+	if r.GoActions == nil {
+		r.GoActions = map[string]func(*Runtime, map[string]any) error{}
+	}
+	r.GoActions[name] = fn
+}
+
 func Load(source string) (*Runtime, error) { return loadRuntime(source, "", nil) }
 
 func LoadNamed(source, chunkName string) (*Runtime, error) {
 	return loadRuntime(source, chunkName, nil)
 }
 
+func LoadWithConfig(source, chunkName string, initialData map[string]any, goActions map[string]func(*Runtime, map[string]any) error, allowHostActions bool) (*Runtime, error) {
+	var seed *Runtime
+	if len(initialData) > 0 || len(goActions) > 0 || allowHostActions {
+		seed = &Runtime{
+			Data:             cloneData(initialData),
+			ChunkName:        chunkName,
+			AltScreen:        true,
+			GoActions:        cloneGoActions(goActions),
+			AllowHostActions: allowHostActions,
+		}
+	}
+	return loadRuntime(source, chunkName, seed)
+}
+
+func LoadNode(root *Node, data map[string]any, goActions map[string]func(*Runtime, map[string]any) error, allowHostActions bool) (*Runtime, error) {
+	if root == nil {
+		return nil, errors.New("view root is nil")
+	}
+	clonedRoot := cloneNode(root)
+	AutoAssignIDs(clonedRoot)
+	if err := sanitizeGoTreeProps(clonedRoot); err != nil {
+		return nil, err
+	}
+	nodes, err := validateTree(clonedRoot)
+	if err != nil {
+		return nil, err
+	}
+	r := &Runtime{
+		Root:             clonedRoot,
+		Nodes:            nodes,
+		State:            map[string]*WidgetState{},
+		Data:             cloneData(data),
+		ChunkName:        "<go>",
+		AltScreen:        true,
+		GoActions:        cloneGoActions(goActions),
+		AllowHostActions: allowHostActions,
+	}
+	if err := r.validateActions(); err != nil {
+		return nil, err
+	}
+	r.restore(nil)
+	if err := ValidateModel(r.Data); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func LoadViewFunc(viewFn func(*Runtime) *Node, data map[string]any, goActions map[string]func(*Runtime, map[string]any) error, allowHostActions bool) (*Runtime, error) {
+	if viewFn == nil {
+		return nil, errors.New("view function is nil")
+	}
+	r := &Runtime{
+		Nodes:            map[string]*Node{},
+		State:            map[string]*WidgetState{},
+		Data:             cloneData(data),
+		ChunkName:        "<go-view>",
+		AltScreen:        true,
+		GoActions:        cloneGoActions(goActions),
+		AllowHostActions: allowHostActions,
+		ViewFunc:         viewFn,
+	}
+	root := viewFn(r)
+	if root == nil {
+		return nil, errors.New("view function returned nil root")
+	}
+	if err := r.reconcileRoot(root); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func sanitizeGoTreeProps(root *Node) error {
+	for node := range ordered(root) {
+		for key, value := range node.Props {
+			cloned, err := cloneValue(value, 0)
+			if err != nil {
+				return &nodeError{Node: node, Property: key, Err: err}
+			}
+			node.Props[key] = cloned
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) reconcileRoot(next *Node) error {
+	if next == nil {
+		return errors.New("nil view root")
+	}
+	cloned := cloneNode(next)
+	AutoAssignIDs(cloned)
+	if err := sanitizeGoTreeProps(cloned); err != nil {
+		return err
+	}
+	ids, err := validateTree(cloned)
+	if err != nil {
+		return err
+	}
+	candidate := *r
+	candidate.Root = cloned
+	if err := candidate.validateActions(); err != nil {
+		return err
+	}
+	candidate.Nodes = ids
+	candidate.State = map[string]*WidgetState{}
+	candidate.Data = cloneData(r.Data)
+	candidate.restore(r)
+	if err := ValidateModel(candidate.Data); err != nil {
+		return err
+	}
+	candidate.ReconcileFocus()
+	candidate.Revision = r.Revision + 1
+	candidate.layoutValid = false
+	*r = candidate
+	return nil
+}
+
+func (r *Runtime) ReconcileTree(next *Node) error {
+	if r.isClosed() {
+		return errors.New("runtime closed")
+	}
+	return r.reconcileRoot(next)
+}
+
+func (r *Runtime) Set(key string, value any) error {
+	if r.isClosed() {
+		return errors.New("runtime closed")
+	}
+	if key == "" {
+		return errors.New("empty model key")
+	}
+	cloned, err := cloneValue(value, 0)
+	if err != nil {
+		return err
+	}
+	if r.inAction {
+		if cloned == nil {
+			delete(r.Data, key)
+		} else {
+			r.Data[key] = cloned
+		}
+		return nil
+	}
+	oldVal, existed := r.Data[key]
+	if cloned == nil {
+		delete(r.Data, key)
+	} else {
+		r.Data[key] = cloned
+	}
+	if err := ValidateModel(r.Data); err != nil {
+		if existed {
+			r.Data[key] = oldVal
+		} else {
+			delete(r.Data, key)
+		}
+		return err
+	}
+	for id, n := range r.Nodes {
+		if n.Type == "input" || n.Type == "textarea" {
+			if str(n, "bind", "") == key {
+				s, _ := cloned.(string)
+				if s != r.State[id].Value {
+					r.State[id].Value = s
+					r.State[id].Cursor = min(r.State[id].Cursor, len(graphemes(s)))
+					r.State[id].Anchor = -1
+				}
+			}
+		}
+	}
+	if r.ViewFunc != nil {
+		if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+			if existed {
+				r.Data[key] = oldVal
+			} else {
+				delete(r.Data, key)
+			}
+			return err
+		}
+	} else {
+		r.Revision++
+	}
+	if !existed || !equalDataVal(oldVal, cloned) {
+		r.notifyState(key, oldVal, cloned)
+	}
+	return nil
+}
+
 func (r *Runtime) Reload(source string) (*Runtime, error) {
-	if r.L == nil {
+	if r.isClosed() {
 		return nil, errors.New("runtime closed")
+	}
+	if source == "" && r.ViewFunc != nil {
+		if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+			return nil, err
+		}
+		return r, nil
 	}
 	return loadRuntime(source, r.ChunkName, r)
 }
 
 func (r *Runtime) ReloadNamed(source, chunkName string) (*Runtime, error) {
-	if r.L == nil {
+	if r.isClosed() {
 		return nil, errors.New("runtime closed")
+	}
+	if source == "" && r.ViewFunc != nil {
+		if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+			return nil, err
+		}
+		return r, nil
 	}
 	return loadRuntime(source, chunkName, r)
 }
 
 func (r *Runtime) Close() {
+	r.closed = true
 	if r.tasks != nil {
 		for id := range r.tasks.active {
 			r.CancelTask(id)
@@ -128,7 +370,7 @@ func (r *Runtime) restore(old *Runtime) {
 }
 
 func (r *Runtime) SetFocus(id string) error {
-	if r.L == nil {
+	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
 	if id == "" {
@@ -187,23 +429,32 @@ func (r *Runtime) FocusPrev() string {
 }
 
 func (r *Runtime) Patch(id string, props map[string]any) error {
-	if r.L == nil {
+	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
-	r.Staged = []Operation{{ID: id, Props: props}}
+	r.Staged = append(r.Staged, Operation{ID: id, Props: props})
+	if r.inAction {
+		return nil
+	}
 	return r.Commit()
 }
 
 func (r *Runtime) Replace(id string, subtree *Node) error {
-	if r.L == nil {
+	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
-	r.Staged = []Operation{{ID: id, Tree: subtree, Replace: true}}
+	if subtree != nil {
+		AutoAssignIDs(subtree)
+	}
+	r.Staged = append(r.Staged, Operation{ID: id, Tree: subtree, Replace: true})
+	if r.inAction {
+		return nil
+	}
 	return r.Commit()
 }
 
 func (r *Runtime) Commit() error {
-	if r.L == nil {
+	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
 	if len(r.Staged) == 0 && r.stagedFocus == nil {
@@ -352,55 +603,78 @@ func (r *Runtime) Commit() error {
 }
 
 func (r *Runtime) Action(name string, event map[string]any) error {
-	if r.L == nil {
+	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
 	if name == "" {
 		return nil
 	}
-	if r.actions == nil {
+	if !r.hasAction(name) {
 		return fmt.Errorf("unknown action %s", name)
-	}
-	f, ok := r.actions.RawGetString(name).(*lua.LFunction)
-	if !ok {
-		return fmt.Errorf("unknown action %s", name)
-	}
-	payload, err := toLua(r.L, event, "payload")
-	if err != nil {
-		return err
 	}
 	oldFocus := r.Focus
 	oldPrevious := r.PreviousFocus
+	oldModal := r.modalID
 	oldData := r.Data
 	r.Data = cloneData(oldData)
 	oldGlobals := snapshotLuaGlobals(r.L)
 	oldEvents := len(r.Events)
 	r.Staged = nil
 	r.stagedFocus = nil
+	r.inAction = true
 	committed := false
 	defer func() {
+		r.inAction = false
 		if !committed {
 			r.Data = oldData
 			restoreLuaGlobals(r.L, oldGlobals)
 			r.PreviousFocus = oldPrevious
+			r.modalID = oldModal
 			r.Staged = nil
 			r.stagedFocus = nil
 			r.Events = r.Events[:oldEvents]
 			r.Focus = oldFocus
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	r.L.SetContext(ctx)
-	defer r.L.RemoveContext()
-	if e := r.L.CallByParam(lua.P{Fn: f, Protect: true}, payload); e != nil {
-		return e
+	ranAny := false
+	if r.hasLuaAction(name) {
+		f := r.actions.RawGetString(name).(*lua.LFunction)
+		payload, err := toLua(r.L, event, "payload")
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		r.L.SetContext(ctx)
+		defer r.L.RemoveContext()
+		if e := r.L.CallByParam(lua.P{Fn: f, Protect: true}, payload); e != nil {
+			return e
+		}
+		ranAny = true
+	}
+	if r.hasGoAction(name) {
+		if e := r.GoActions[name](r, event); e != nil {
+			return e
+		}
+		ranAny = true
+	}
+	if !ranAny && r.AllowHostActions {
+		clonedEvent, err := cloneValue(event, 0)
+		if err != nil {
+			return err
+		}
+		r.Events = append(r.Events, HostEvent{Action: name, Payload: clonedEvent})
 	}
 	if e := ValidateModel(r.Data); e != nil {
 		return e
 	}
 	if e := r.Commit(); e != nil {
 		return e
+	}
+	if r.ViewFunc != nil {
+		if e := r.reconcileRoot(r.ViewFunc(r)); e != nil {
+			return e
+		}
 	}
 	for id, n := range r.Nodes {
 		if n.Type == "input" || n.Type == "textarea" {

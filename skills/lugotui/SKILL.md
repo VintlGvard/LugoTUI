@@ -1,420 +1,270 @@
 ---
 name: lugotui
-description: Build, inspect, test, and debug Go+Lua TUI applications with LugoTUI. Covers Lua UI declaration, Flexbox widgets, state binding, 2D spatial & directional navigation, widget keymaps, Go background tasks, hot reload, CLI commands, and JSON Lines IPC socket control.
+description: Build, inspect, test, and debug Pure-Go and Go+Lua TUI applications with LugoTUI. Covers Pure-Go reactive & retained View Builder DSL, Lua Live Hot-Reload templates, Flexbox widgets, two-way state binding, 2D spatial & directional navigation, middleware/hooks, Go background tasks, and JSON Lines IPC socket control.
 ---
 
-# LugoTUI Agent Skill
+# LugoTUI Developer & Agent Skill
 
-LugoTUI is a terminal UI library and runner for Go and Lua. It combines declarative Lua component trees, Flexbox layout, two-way model binding, 2D spatial navigation, hot reload (150ms), Go background worker tasks, and a JSON Lines IPC socket.
+LugoTUI is a high-performance Terminal UI framework for Go (`github.com/VintlGvard/LugoTUI` / `github.com/VintlGvard/LugoTUI/tui`) that works **100% in Pure Go** (exceeding Bubble Tea + Lip Gloss + Bubbles out of the box) AND supports **Lua Live Hot-Reload (150ms)** as its killer feature.
 
 ## When to Activate
 
-- Writing or refactoring LugoTUI Lua applications (`app.lua`)
-- Implementing keyboard navigation (2D spatial, directional arrows, Vim keys, local keymaps)
-- Integrating LugoTUI into Go programs (`github.com/VintlGvard/LugoTUI/tui`)
-- Implementing background tasks, event handling, or model synchronization
-- Automating, testing, or inspecting running TUIs via headless CLI or Unix domain socket (IPC)
-- Debugging layout issues, schema errors, hot-reload state resets, or concurrency bugs
+- Building TUI applications in **Pure Go** (`QuickViewFunc`, `QuickView`, `NewProgram`, fluent View Builder DSL)
+- Building **Hybrid Go + Lua** TUI applications (`app.lua` + `WithAppFile` / `WithHandlers`) with 150ms live hot-reload
+- Implementing keyboard navigation (2D spatial, directional arrows, Vim keys, widget-scoped keymaps)
+- Using middleware (`WithMiddleware`), input filters (`WithInputFilter`), state observers (`WithStateObserver`), OSC52 clipboard (`WithClipboard`), or custom cell-diff renderers (`WithRenderer`)
+- Running background tasks (`StartTask`, `StartTaskNamed`, `StartTaskDebounced`) and external control (`Program.Send`, `Program.Set`, `Program.Patch`, `Program.Quit`)
+- Automating, testing, or inspecting running TUIs via headless `LoadView` / `LoadViewFunc` / `Load` or Unix domain socket IPC
 
 ---
 
-## 1. Execution Modes
+## 1. Execution & Architecture Modes
 
 | Mode | Entry Point | Best For |
 | --- | --- | --- |
-| **Go Library** | `tui.RunOptions(opts)` | Apps requiring Go business logic, database/HTTP access, custom background workers, or system APIs. |
-| **Standalone CLI** | `lugotui --app app.lua` | Pure Lua UIs, rapid prototyping, scripts, or apps controlled externally via IPC. |
-| **IPC Controller** | Unix Domain Socket | Headless automation, testing, or external agent control of an active interface. |
+| **1. Pure-Go Reactive (Bubble Tea Killer)** | `lugotui.QuickViewFunc(fn, handlers, opts...)` / `WithViewFunc(fn)` | Pure-Go apps with reactive `func(rt *Runtime) *Node` view functions. Zero Lua VM overhead, automatic Flexbox layout, and automatic preservation of focus, cursor, and scroll state across re-renders. |
+| **2. Pure-Go Retained** | `lugotui.QuickView(root, handlers, opts...)` / `WithView(root)` | Pure-Go apps that build the widget tree once and mutate via `rt.Set(k, v)` (two-way `Bind`) or surgical `rt.Patch` / `rt.Replace`. |
+| **3. Hybrid Go + Lua (Killer Feature)** | `lugotui.RunApp("app.lua", opts...)` / `QuickRun(src, handlers)` | Instant **150ms Live Hot-Reload** on `.lua` edits, user-customizable plugins/themes, and optional Linux `bubblewrap` sandboxing (`--sandbox`). Widget events (`on_click = "save"`) dispatch directly to Go `WithAction` / `WithHandlers` without Lua boilerplate! |
+| **4. Standalone CLI / IPC** | `lugotui --app app.lua [--socket /tmp/app.sock]` | Rapid prototyping, standalone Lua tools, and external AI agent control over JSON Lines Unix socket. |
+
+Both `github.com/VintlGvard/LugoTUI` (root package `lugotui`) and `github.com/VintlGvard/LugoTUI/tui` export the exact same API.
 
 ---
 
-## 2. Lua Application Structure (`app.lua`)
+## 2. Mode 1: Pure-Go Reactive UI (`WithViewFunc` / `QuickViewFunc`)
 
-A LugoTUI application returns a table specifying `api_version`, `view`, `actions`, and optional `keymap` / `spatial_nav`:
-
-```lua
-local ui = require('ui')
-
-return {
-    api_version = 1,
-    spatial_nav = true, -- Enable 2D spatial arrow navigation globally
-
-    -- Factory function: called on initial load and on hot reload (F5)
-    view = function()
-        return ui.column {
-            grow = 1,
-            padding = 1,
-            gap = 1,
-            ui.panel {
-                title = "Dashboard",
-                border = "rounded",
-                ui.text { bind = "status_msg" },
-                ui.row {
-                    gap = 1,
-                    ui.input {
-                        id = "search_input",
-                        bind = "query",
-                        placeholder = "Search packages...",
-                        nav_down = "pkg_table",
-                    },
-                    ui.button {
-                        id = "btn_submit",
-                        text = "Submit",
-                        on_click = "submit_query",
-                        nav_down = "pkg_table",
-                    },
-                },
-                ui.table {
-                    id = "pkg_table",
-                    columns = {
-                        { title = "Package", width = 25 },
-                        { title = "Version", width = 12 },
-                        { title = "Status", width = 15 },
-                    },
-                    rows = {
-                        { "neovim", "0.10.0", "installed" },
-                        { "ripgrep", "14.1.0", "available" },
-                    },
-                    bind = "selected_pkg",
-                    on_select = "on_pkg_select",
-                    nav_up = "search_input",
-                    -- Node-scoped keymap (does not steal keys from search_input):
-                    keymap = {
-                        ["Space"] = "toggle_pkg",
-                        ["i"]     = "install_pkg",
-                    },
-                },
-            },
-        }
-    end,
-
-    -- Event handlers called when user interacts with UI or host dispatches
-    actions = {
-        submit_query = function(event)
-            local query = ui.get("query")
-            if not query or query == "" then
-                ui.set("status_msg", "Please enter a query.")
-                return
-            end
-            ui.set("status_msg", "Searching: " .. query)
-            host.dispatch("start_search", { query = query })
-        end,
-
-        on_pkg_select = function(event)
-            -- event.index is 1-based row index
-            ui.set("status_msg", "Selected row: " .. tostring(event.index))
-        end,
-
-        toggle_pkg = function(event)
-            ui.set("status_msg", "Toggled package at " .. tostring(event.id))
-        end,
-
-        install_pkg = function(event)
-            ui.set("status_msg", "Installing selected package...")
-        end,
-
-        -- Called when Go host background task finishes
-        search_complete = function(event)
-            if event.payload and event.payload.result then
-                ui.set("status_msg", "Found: " .. event.payload.result)
-            elseif event.payload and event.payload.error then
-                ui.set("status_msg", "Error: " .. event.payload.error)
-            end
-        end,
-    end,
-
-    -- Global key shortcuts (active across entire app)
-    keymap = {
-        ["ctrl+s"] = "submit_query",
-    },
-}
-```
-
----
-
-## 3. Core Lua Operations & Focus APIs
-
-### Model & Tree Operations
-- `ui.get(key)`: Read value from explicit model.
-- `ui.set(key, value)`: Write value to explicit model (preserves across hot reload).
-- `ui.patch(id, props)`: Update specific properties of an existing node without full rebuild.
-- `ui.patch({ [id1] = props1, [id2] = props2 })` / `ui.patch_all(table)`: Batch update multiple nodes in a single atomic commit.
-- `ui.replace(id, new_node)`: Replace a node and its children.
-- `host.dispatch(action, payload, [opts])`: Dispatch event to Go host (`OnEvent`). Pass `{ debounce = true }` in `opts` or payload to deduplicate and replace pending events by action.
-
-### Focus & Navigation APIs
-- `ui.focus(id)`: Request keyboard focus for node `id`.
-- `ui.focused()`: Return `id` of currently focused node, or `nil`.
-- `ui.focus_direction(dir)`: Move focus in direction `'up'`, `'down'`, `'left'`, or `'right'`. Uses explicit target or 2D edge distance projection. Returns target node `id` or `nil`.
-- `ui.focus_next()`: Advance focus forward in document order (Tab equivalent). Returns target `id` or `nil`.
-- `ui.focus_prev()`: Retreat focus backward in document order (Shift+Tab equivalent). Returns target `id` or `nil`.
-
----
-
-## 4. 2D Spatial & Directional Navigation
-
-LugoTUI supports 3-tier navigation:
-
-### 1. Explicit Directional Navigation
-Hardwire navigation routes between complex panels:
-- `nav_up = "target_id"`, `nav_down = "target_id"`, `nav_left = "target_id"`, `nav_right = "target_id"`
-- Or table syntax: `nav = { up = "id", down = "id", left = "id", right = "id" }`
-- To disable a direction: `nav_up = "none"` or `nav_up = "false"`
-
-### 2. Automatic & Spatial 2D Fallback
-When explicit target is absent, the engine calculates the closest focusable node using 2D edge projection:
-- **Buttons (`ui.button`)**: Automatically navigate in all 4 directions on arrow keys.
-- **Opt-in (`spatial_nav = true`)**: Set globally in root spec (`return { spatial_nav = true, ... }`) or per-node (`ui.input { spatial_nav = true, ... }`).
-  - **Inputs (`ui.input`)**: `Up` / `Down` arrows jump to adjacent widgets; `Left` / `Right` arrows remain cursor navigation.
-  - **Collections (`ui.table`, `ui.list`, `ui.scroll`, `ui.viewport`, `ui.tree`)**: `Left` / `Right` arrows jump to adjacent panels; `Up` / `Down` arrows remain item/row navigation.
-
----
-
-## 5. Widget Keymaps & Keystroke Interception
-
-Avoid global key conflicts by scoping keybindings to focused nodes:
-
-### Node-Scoped `keymap`
-```lua
-ui.table {
-    id = "my_table",
-    keymap = {
-        ["Space"]  = "toggle_item",
-        ["i"]      = "install_item",
-        ["d"]      = "delete_item",
-        ["ctrl+f"] = "filter_items",
-    },
-}
-```
-Only fires when `my_table` has focus. Does not interfere with typing in an `input` widget.
-
-### Raw Keystroke Interception (`on_key`)
-Intercept all keystrokes on a focused node:
-```lua
-ui.box {
-    id = "game_canvas",
-    on_key = "handle_game_input",
-}
-```
-Event payload passed to action:
-```lua
-actions = {
-    handle_game_input = function(event)
-        -- event.id    : string ("game_canvas")
-        -- event.key   : string ("Up", "Enter", "ctrl+a", etc.)
-        -- event.rune  : string (character rune)
-        -- event.ctrl  : boolean
-        -- event.alt   : boolean
-        -- event.shift : boolean
-        -- event.focus : string
-    end,
-}
-```
-
----
-
-## 6. Widget Catalog & Schemas
-
-### Layout Containers
-- **`ui.column { ... }`**: Vertical container (`direction = "column"`).
-- **`ui.row { ... }`**: Horizontal container (`direction = "row"`).
-- **`ui.box { ... }`**: Generic flex container.
-- **`ui.panel { title = "Title", border = "rounded", ... }`**: Styled container with border and title.
-  Borders: `"single"`, `"double"`, `"rounded"`, `"none"`.
-- **`ui.scroll { ... }`**: Scrollable container for overflowing children.
-- **`ui.overlay { base = node, overlay = node }`**: Stacks floating overlay over base layout.
-
-### Flexbox Properties
-- `grow = 1`, `shrink = 0`, `basis = 10`
-- `width = 20` | `"50%"` | `"auto"`, `height = 10` | `"auto"`
-- `min_width`, `max_width`, `min_height`, `max_height`
-- `padding = 1`, `margin = 1`, `gap = 1`
-- `justify = "start"` | `"center"` | `"end"` | `"space-between"` | `"space-around"`
-- `align = "start"` | `"center"` | `"end"` | `"stretch"`
-- `align_self = "start"` | `"center"` | `"end"` | `"stretch"`
-- `position = "absolute"`, `top = 0`, `bottom = 0`, `left = 0`, `right = 0`, `z_index = 10`
-
-### Interactive Widgets
-- **`ui.input`**: Single-line text input.
-  `id` (required for state persistence), `bind` (model key), `placeholder`, `prompt`, `char_limit`, `echo = "password"|"none"`, `on_change`, `on_submit`, `nav_*`, `spatial_nav`, `keymap`, `on_key`.
-- **`ui.textarea`**: Multi-line text editor.
-  `id`, `bind`, `placeholder`, `line_numbers = true`, `nav_*`, `keymap`, `on_key`.
-- **`ui.button`**: Clickable button.
-  `id`, `text`, `on_click`, `nav_*`, `keymap`, `on_key`. (Intrinsic width accounts for brackets `[ text ]`, flex shrink defaults to 0).
-
-### Data & Collection Widgets
-- **`ui.table`**: Data table with keyboard selection.
-  *CRITICAL SCHEMA RULE:* `columns` MUST be a list of objects with `title` and `width`:
-  ```lua
-  ui.table {
-      id = "items_table",
-      columns = {
-          { title = "ID", width = 6, align = "left" },
-          { title = "Name", width = 20, align = "left" },
-          { title = "Price", width = 10, align = "right" },
-      },
-      rows = {
-          { "1", "Widget A", "$10" },
-          { "2", { text = "Widget B", fg = "green", bold = true, align = "right" }, "$20" },
-      },
-      bind = "selected_row",
-      on_select = "on_row_select",
-      on_change = "on_row_change", -- { id, index, value }
-  }
-  ```
-- **`ui.list`**: List with optional fuzzy filtering.
-  `id`, `items = { "Alpha", "Beta" }`, `bind = "selected_idx"`, `on_select = "action"`, `on_change = "action"`, `filterable = true` (press `/` to filter; query updates trigger `on_change` with `{ id, query, value }`, row selection triggers `{ id, index, value }`).
-- **`ui.tree`**: Hierarchical tree view.
-  `id`, `items = { { id = "root", text = "Root", expanded = true, children = { ... } } }`, `on_select`, `on_change`.
-- **`ui.viewport`**: Scrollable read-only text view with Vim keys (`j`/`k`, `d`/`u`, `g`/`G`).
-  `id`, `text = "..."`, `soft_wrap = true`, `show_line_numbers = true`.
-
-### Indicators & Motion
-- **`ui.text`**: Text display.
-  `text`, `bind`, `wrap = "none"`, `spans = { { text = "Bold Red", fg = "red", bold = true } }`.
-- **`ui.spinner`**: Animated spinner.
-  `preset = "dots"` (options: `dots`, `line`, `dot`, `jump`, `pulse`, `globe`, `moon`, `ellipsis`), `interval = 80`.
-- **`ui.progress`**: Progress bar.
-  `percent = 0.75` (0.0 to 1.0), `gradient = { "#0088ff", "#00ff88" }`.
-- **`ui.paginator`**: Pagination control.
-  `page = 0` (0-based), `per_page = 10`, `total = 50`, `mode = "numeric"|"dots"`.
-
-### Modals & Dialogs
-- Add `modal = true` to any panel/box. Focus is trapped inside; pressing `Escape` closes the modal.
-
----
-
-## 7. State Management & Hot Reload Rules
-
-LugoTUI enforces a clean separation between transient UI closures and persistent model state:
-
-1. **Explicit Model (`ui.get` / `ui.set`)**:
-   Always store business state (selected IDs, inputs, checkboxes, fetched lists) in the model. Model state survives hot reloads (F5).
-2. **Never Store State in Lua Module-Level Globals**:
-   Lua files are re-evaluated completely on reload. Module variables reset to default values.
-3. **Always Provide Stable `id`s**:
-   `ui.input`, `ui.textarea`, `ui.table`, `ui.list` track scroll offsets, cursor positions, and selections via `id`. Without `id`, state resets on every render.
-4. **Action Transactions**:
-   Actions execute atomically. Model updates, focus shifts, and queued host dispatches commit together. Errors roll back changes cleanly.
-
----
-
-## 8. Go Host Integration & Concurrency
+Unlike Bubble Tea—where you manually route `tea.Msg` through every child input/table, calculate `lipgloss.Width` math on `tea.WindowSizeMsg`, and concatenate ANSI strings—LugoTUI gives you a declarative Go View Builder with automatic Flexbox layout, 2D focus management, and cell-diff rendering:
 
 ```go
 package main
 
 import (
-	"context"
-	"fmt"
-	"time"
+	"log"
 
-	"github.com/VintlGvard/LugoTUI/tui"
+	lugo "github.com/VintlGvard/LugoTUI"
 )
 
 func main() {
-	var taskID uint64
-
-	opts := tui.Options{
-		AppFile: "app.lua",
-		OnEvent: func(rt *tui.Runtime, event tui.HostEvent) {
-			switch event.Action {
-			case "start_search":
-				query, _ := event.Payload["query"].(string)
-
-				// Automatically cancel previous pending task by name and delay 200ms:
-				_, err := rt.StartTaskDebounced("search", 200*time.Millisecond, "search_complete", func(ctx context.Context) (map[string]any, error) {
-					return map[string]any{"result": "Matched: " + query}, nil
-				})
-				if err != nil {
-					fmt.Printf("start task error: %v\n", err)
-				}
-			}
+	err := lugo.QuickViewFunc(
+		func(rt *lugo.Runtime) *lugo.Node {
+			return lugo.Column(
+				lugo.Panel("Counter Dashboard",
+					lugo.Textf("Query: %s | Count: %d", rt.String("query"), rt.Int("count")).Bold(true).FG("cyan"),
+					lugo.Input("query").SetID("search").Placeholder("Type to filter..."),
+					lugo.If(rt.Bool("details"),
+						lugo.Text("Extra diagnostics enabled").FG("green"),
+					),
+					lugo.Row(
+						lugo.Button("+1", "inc").SetID("btn_inc"),
+						lugo.Button("Toggle Details", "toggle").SetID("btn_toggle"),
+					).Gap(1),
+				).Grow(1).Padding(1).Gap(1),
+			).Padding(1)
 		},
-	}
-
-	if err := tui.RunOptions(opts); err != nil {
-		panic(err)
+		map[string]lugo.ActionHandler{
+			"inc": func(rt *lugo.Runtime, _ any) error {
+				return rt.AddInt("count", 1)
+			},
+			"toggle": func(rt *lugo.Runtime, _ any) error {
+				return rt.ToggleBool("details")
+			},
+		},
+		lugo.WithState("count", 0),
+		lugo.WithState("details", false),
+	)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 ```
 
-### Go Host Rules
-- **Rule 1 (UI Thread Only)**: `*tui.Runtime` methods (`StartTask`, `CancelTask`, `Model`, `SetFocus`, `FocusDirection`, `FocusNext`, `FocusPrev`, `Close`) MUST only be called from `OnEvent` or the runtime owner goroutine.
-- **Rule 2 (No Runtime Pointers in Workers)**: Background worker functions run on separate goroutines. NEVER pass `*tui.Runtime` into a worker or touch the Lua state from a worker.
-- **Rule 3 (Data Transfer via Payload)**: Pass data into tasks by value. Return results via `map[string]any`. LugoTUI safely dispatches results back to the Lua action on the main UI loop.
-- **Rule 4 (Handle Cancellation)**: Workers must check `<-ctx.Done()` to clean up resources when canceled or when the app exits.
+### Why This Beats Bubble Tea
+- **Zero Boilerplate**: No `Init()`, `Update(tea.Msg)`, `View() string` ceremony or manual `tea.WindowSizeMsg` math.
+- **Preserved Widget State**: Typing into `lugo.Input("query").SetID("search")` automatically updates `rt.String("query")`, re-evaluates `ViewFunc`, and reconciles the new `*Node` tree while keeping keyboard focus, cursor position, and undo history intact.
+- **Conditional & List Helpers**:
+  - `lugo.If(cond, node)` / `node.When(cond)` — returns `nil` when false (containers automatically ignore `nil` children).
+  - `lugo.IfElse(cond, thenNode, elseNode)`
+  - `lugo.Map(slice, func(i int, item T) *lugo.Node { ... })`
 
 ---
 
-## 9. Verification & Headless Testing
+## 3. Mode 2: Pure-Go Retained UI (`WithView` / `QuickView`)
 
-Agents should always verify changes headlessly before presenting:
+For maximum performance (12 heap allocations per frame on a 300-node tree), build the view once and let two-way `Bind(key)` and `rt.Set(key, val)` update widgets in place:
 
-```sh
-# 1. Validate syntax, schema, layout, and render (exit code 0 = pass)
-lugotui --app app.lua --check
+```go
+view := lugo.Column(
+	lugo.Text("").Bind("status").Height(1),
+	lugo.Input("name").Placeholder("Enter your name...").OnSubmit("save").Height(1),
+	lugo.Button("Save", "save").Height(1),
+).Padding(1).Gap(1)
 
-# 2. Inspect layout tree, clip rectangles, and state as JSON
-lugotui --app app.lua --snapshot
-
-# 3. Run Go test suite with race detector
-go test -race ./...
+err := lugo.QuickView(view, map[string]lugo.ActionHandler{
+	"save": func(rt *lugo.Runtime, _ any) error {
+		return rt.Set("status", "Saved: "+rt.String("name"))
+	},
+}, lugo.WithState("status", "Ready"))
 ```
 
-### Headless Go Unit Test Example
+Note: Explicit `.SetID("...")` is optional in Pure-Go views—`AutoAssignIDs` deterministically assigns stable IDs (`root`, `root.input_name`, `root.button_save`, etc.) when omitted. Provide explicit `.SetID("...")` when targeting a node with `rt.Patch(id, ...)` or when reordering dynamic children in `WithViewFunc`.
+
+---
+
+## 4. Mode 3: Hybrid Go + Lua Live Hot-Reload (`WithAppFile` / `WithSource`)
+
+Move layout into `app.lua` whenever you want **150ms live hot-reload** without recompiling Go, or user-scriptable themes/plugins.
+
+### Direct Go Dispatch (Zero Lua Action Boilerplate)
+Widget events (`on_click`, `on_change`, `on_submit`, `on_select`, `keymap`) in `app.lua` automatically invoke Go handlers registered via `WithAction` / `WithHandlers`—you do **not** need to write pass-through Lua `actions = { ... }` functions unless you want local Lua logic!
+
+```lua
+-- app.lua
+local ui = require('ui')
+
+return {
+    api_version = 1,
+    spatial_nav = true,
+    view = function()
+        return ui.column {
+            padding = 1, gap = 1,
+            ui.panel {
+                title = "Dashboard",
+                border = true,
+                ui.text { bind = "status_msg", height = 1 },
+                ui.row {
+                    gap = 1, height = 1,
+                    ui.input { id = "search_input", bind = "query", placeholder = "Search..." },
+                    ui.button { id = "btn_submit", text = "Submit", on_click = "submit_query" },
+                },
+            },
+        }
+    end,
+}
+```
+
 ```go
-func TestAppLayout(t *testing.T) {
-	rt, err := tui.Load(tui.RuntimeOptions{AppFile: "app.lua"})
+// main.go — same Go handlers work with Pure-Go view OR app.lua!
+p := lugo.NewProgram(
+	lugo.WithAppFile("app.lua"),
+	lugo.WithState("status_msg", "Ready"),
+	lugo.WithAction("submit_query", func(rt *lugo.Runtime, _ any) error {
+		return rt.Set("status_msg", "Searching: "+rt.String("query"))
+	}),
+)
+```
+
+---
+
+## 5. Complete Pure-Go View Builder DSL Reference
+
+### Constructors
+- **Containers**:
+  - `Column(children ...*Node) *Node`
+  - `Row(children ...*Node) *Node`
+  - `Box(children ...*Node) *Node`
+  - `Panel(title string, children ...*Node) *Node` (sets `title` and `border: true`)
+  - `Scroll(children ...*Node) *Node`
+  - `Overlay(children ...*Node) *Node`
+  - `Modal(id, title string, children ...*Node) *Node` (sets `border: true`, `modal: true`, `trap_focus: true`)
+  - `Spacer() *Node` (`Box().Grow(1)`)
+- **Primitives & Text**:
+  - `Text(text string) *Node`
+  - `Textf(format string, args ...any) *Node`
+  - `Button(label string, onClick ...string) *Node`
+  - `Spinner(preset ...string) *Node` (presets: `"line"`, `"dot"`, `"mini_dot"`, `"jump"`, `"pulse"`, `"points"`, `"globe"`, `"moon"`, `"monkey"`, `"meter"`, `"hamburger"`, `"ellipsis"`)
+  - `Progress(percent float64) *Node` (`0.0` .. `1.0`)
+  - `Paginator(page, perPage, total int) *Node`
+  - `Timer(durationMs int, onTimeout ...string) *Node`
+  - `Stopwatch() *Node`
+  - `Help(bindings ...HelpBinding) *Node` (`HelpBinding{Keys: []string{"q"}, Description: "Quit"}`)
+  - `Cursor() *Node`
+- **Editors**:
+  - `Input(bindKey string) *Node` (supports `Ctrl+C`, `Ctrl+X`, `Ctrl+V`, `Ctrl+Z`, `Ctrl+Y`, `Ctrl+A`, `Shift+Arrow` selection)
+  - `Textarea(bindKey string) *Node`
+- **Collections**:
+  - `List(items ...string) *Node` (`.Filterable(true)` enables `/` live filtering)
+  - `Table(columns []TableColumn, rows [][]string) *Node` (`TableColumn{Title, Width, Align}`)
+  - `Tree(items ...TreeItem) *Node` (`TreeItem{ID, Text, Expanded, Children}`)
+  - `Viewport(text string, highlights ...HighlightSpan) *Node` (`HighlightSpan{Start, End}`)
+  - `Filepicker(entries ...FileEntry) *Node` (`FileEntry{ID, Text, Path, IsDir, Size, Permissions, Description}`)
+
+### Chainable `*Node` Methods
+- **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond)`
+- **Dimensions & Flex**: `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`, `.Grow(g)`, `.Shrink(s)`, `.Flex(g)`, `.Padding(p)`, `.Gap(g)`, `.Align(a)`, `.Justify(j)`, `.ZIndex(z)`, `.Absolute(x, y)`
+- **Appearance**: `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.Border(bool)`, `.Bordered()`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Wrap(bool)`, `.Variant(v)`
+- **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Focusable(bool)`, `.Modal(bool)`, `.TrapFocus(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.PageSize(n)`
+- **Events & Keys**: `.OnClick(action)`, `.OnChange(action)`, `.OnSubmit(action)`, `.OnSelect(action)`, `.OnActivate(action)`, `.OnTimeout(action)`, `.Key(chord, action)`, `.Keymap(map[string]string)`
+
+---
+
+## 6. Program Options, Middleware, & External Control
+
+### Functional `Option` Builders
+- **Source / View**: `WithView(node)`, `WithViewFunc(fn)`, `WithAppFile(path)`, `WithSource(luaCode)`
+- **State & Actions**: `WithState(key, val)`, `WithInitialData(map)`, `WithAction(name, fn)`, `WithHandlers(map)`, `WithOnEvent(fn)`, `WithOnReady(fn)`
+- **Extensibility Hooks**:
+  - `WithMiddleware(mw ...EventMiddleware)` — intercept, log, or short-circuit events
+  - `WithInputFilter(func(tcell.Event) tcell.Event)` — rewrite or drop raw terminal events before processing
+  - `WithStateObserver(func(key string, oldVal, newVal any))` — observe state changes
+  - `WithRenderer(Renderer)` / `WithRendererFunc(fn)` — custom frame rendering hook
+  - `WithClipboard(Clipboard)` — custom clipboard (defaults to `OSC52Clipboard`)
+- **Terminal & Runtime Modes**:
+  - `WithAltScreen(bool)` — fullscreen alternate buffer (default `true` unless inline)
+  - `WithInline(height int)` — inline rendering inside primary terminal buffer without clearing history
+  - `WithMouse(bool)`, `WithPaste(bool)`, `WithFPS(fps int)`, `WithTheme(Theme)`
+  - `WithSocket(path)`, `WithSandbox()`, `WithCheck()`, `WithSnapshot()`, `WithoutPanicRecovery()`
+
+### Thread-Safe External Control on `*Program`
+Call from any goroutine while `p.Run()` is active:
+- `p.Send(action string, payload map[string]any) error`
+- `p.Set(key string, value any) error`
+- `p.Patch(id string, props map[string]any) error`
+- `p.Reload() error`
+- `p.EnterAltScreen() error` / `p.ExitAltScreen() error`
+- `p.Quit()`
+
+### Typed State Helpers on `*Runtime`
+- `rt.String(key) string`, `rt.Int(key) int`, `rt.Float(key) float64`, `rt.Bool(key) bool`, `rt.Model(key) any`
+- `rt.Set(key, val) error`, `rt.AddInt(key, delta) error`, `rt.ToggleBool(key) error`
+- `rt.On(action, handler) *Runtime`, `rt.Patch(id, props) error`, `rt.Replace(id, subtree) error`, `rt.ReconcileTree(root) error`
+
+---
+
+## 7. Lua API Reference (When Using `.lua` Views)
+
+- **State & Tree**: `ui.get(key)`, `ui.set(key, val)`, `ui.patch(id, props)`, `ui.patch_all(table)`, `ui.replace(id, node)`
+- **Focus**: `ui.focus(id)`, `ui.focused()`, `ui.focus_next()`, `ui.focus_prev()`, `ui.focus_direction("up"|"down"|"left"|"right")`
+- **Clipboard & Screen**: `ui.clipboard_get()`, `ui.clipboard_set(text)`, `ui.enter_alt_screen()`, `ui.exit_alt_screen()`
+- **Host Dispatch**: `host.dispatch(action, payload, [opts])` (pass `{ debounce = true }` to coalesce rapid events)
+
+---
+
+## 8. Headless Testing & Verification
+
+Test Pure-Go or Lua interfaces in milliseconds without a real TTY:
+
+```go
+func TestCounter(t *testing.T) {
+	rt, err := lugo.LoadViewFunc(
+		func(r *lugo.Runtime) *lugo.Node {
+			return lugo.Column(
+				lugo.Textf("Count: %d", r.Int("n")).SetID("lbl"),
+				lugo.Button("+1", "inc").SetID("btn"),
+			)
+		},
+		lugo.WithState("n", 1),
+		lugo.WithAction("inc", func(r *lugo.Runtime, _ any) error {
+			return r.AddInt("n", 1)
+		}),
+	)
 	if err != nil {
-		t.Fatalf("failed to load app: %v", err)
+		t.Fatal(err)
 	}
 	defer rt.Close()
 
-	if err := rt.Layout(80, 24); err != nil {
-		t.Fatalf("layout failed: %v", err)
-	}
-	if rt.Focus() == "" {
-		t.Errorf("expected initial focus")
+	_ = rt.Action("inc", nil)
+	if rt.Int("n") != 2 {
+		t.Fatalf("expected 2, got %d", rt.Int("n"))
 	}
 }
 ```
-
----
-
-## 10. Socket IPC Protocol (JSON Lines)
-
-Enable socket IPC:
-```sh
-lugotui --app app.lua --socket /tmp/lugotui.sock
-```
-
-Communicate over the Unix domain socket:
-- **Snapshot**: `{"cmd":"snapshot","id":1}`
-- **Apply Action**:
-  ```json
-  {
-    "cmd": "apply",
-    "id": 2,
-    "revision": 0,
-    "actions": [
-      {"type": "input", "id": "search_input", "value": "term"},
-      {"type": "call", "action": "submit_query"}
-    ]
-  }
-  ```
-- **Subscribe to Events**: `{"cmd":"events","id":3}`
-
----
-
-## 11. Common Pitfalls & Diagnostics
-
-| Problem | Cause | Solution |
-| --- | --- | --- |
-| `columns must be array of objects` | `ui.table` defined with string array `columns = { "A", "B" }`. | Use `{ { title = "A", width = 10 }, { title = "B", width = 15 } }`. |
-| Arrow keys trapped in table / input | Widget consumes arrows for internal navigation. | Use explicit `nav_up`/`nav_down` or enable `spatial_nav = true`. |
-| Hotkey triggers while typing in input | Global `keymap` caught letter or `Space`. | Move shortcut to widget-specific `keymap = { ... }` on the table or button. |
-| Input cursor/scroll resets on update | Widget lacks `id` or has changing `id`. | Assign a fixed, unique `id = "..."` string. |
-| Button text truncated with brackets `[ ... ]` | Explicit `width` too small or container flex constraints. | Buttons include 4 cells for brackets `[  ]`. Use `shrink = 0` (default) or increase `width`. |
-| Data disappears on F5 hot reload | State stored in local Lua variables. | Store in model via `ui.set("key", val)` and read with `ui.get("key")`. |
-| Panic: concurrent map read/write | Worker goroutine touched `*tui.Runtime` or shared map. | Keep workers isolated; return data through the worker's `map[string]any` payload. |

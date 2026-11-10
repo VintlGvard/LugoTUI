@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	lua "github.com/yuin/gopher-lua"
 )
 
 type TaskResult struct {
@@ -31,13 +29,13 @@ func (r *Runtime) StartTask(action string, work func(context.Context) (map[strin
 }
 
 func (r *Runtime) startTaskAfter(action string, delay time.Duration, work func(context.Context) (map[string]any, error)) (uint64, error) {
-	if r.L == nil {
+	if r.isClosed() {
 		return 0, errors.New("runtime closed")
 	}
 	if work == nil {
 		return 0, protocolError(CodeValidationError, errors.New("nil task"))
 	}
-	if r.actions == nil || r.actions.RawGetString(action).Type() != lua.LTFunction {
+	if !r.hasAction(action) {
 		return 0, protocolError(CodeValidationError, fmt.Errorf("unknown action %s", action))
 	}
 	if r.tasks == nil {
@@ -145,7 +143,7 @@ func (r *Runtime) TaskResults() <-chan TaskResult {
 }
 
 func (r *Runtime) HandleTask(result TaskResult) error {
-	if r.L == nil {
+	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
 	if r.tasks == nil || result.owner != r.tasks || r.tasks.active[result.ID] == nil {

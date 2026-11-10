@@ -1,115 +1,146 @@
 # LugoTUI
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/VintlGvard/LugoTUI/tui.svg)](https://pkg.go.dev/github.com/VintlGvard/LugoTUI/tui)
-[![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-blue.svg)](LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/VintlGvard/LugoTUI)](https://github.com/VintlGvard/LugoTUI/releases/latest)
+**High-Performance Declarative TUI Engine for Go — Pure Go by Default, Lua Live Hot-Reload as a Superpower**
 
-**Declarative, Lua-driven Terminal UI Engine for Go with instant Live Hot-Reload and built-in AI Agent IPC.**
+[![CI](https://github.com/VintlGvard/LugoTUI/actions/workflows/ci.yml/badge.svg)](https://github.com/VintlGvard/LugoTUI/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/VintlGvard/LugoTUI)](https://goreportcard.com/report/github.com/VintlGvard/LugoTUI)
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
 
-Stop recompiling your Go binary every time you tweak a margin or color. **LugoTUI** separates backend logic (Go) from declarative UI layouts (embedded Lua), with a Flexbox subset and file-backed hot-reload polling every 150ms. Builds with `CGO_ENABLED=0`.
+LugoTUI is an embeddable Terminal UI library (`github.com/VintlGvard/LugoTUI` / `github.com/VintlGvard/LugoTUI/tui`) and standalone runner that gives you **100% Pure-Go declarative & reactive UIs** out of the box—plus **150ms Live Hot-Reload via Lua** whenever you want instant visual iteration or user-scriptable plugins.
 
-![LugoTUI Demo](docs/assets/demo.gif)
-
----
-
-## Why LugoTUI?
-
-* 🔥 **Live Hot-Reload:** Edit `.lua` files; file-backed apps check for changes every 150ms and restore state after reload.
-* 📦 **Zero CGO, Pure Go:** Powered by `tcell/v2`, `uniseg`, and `GopherLua`. Cross-compiles to a single static binary.
-* 📐 **Flexbox Layout Engine:** Built-in `row`, `column`, `grow`, `shrink`, `gap`, `padding`, `z_index`, and absolute positioning.
-* 🧩 **Rich Native Widgets:** Out-of-the-box `table`, `tree`, filterable `list`, `viewport`, `input`, `textarea`, `modal`, `filepicker`, and 12 `spinner` presets with Vim navigation and full mouse support.
-* 🤖 **AI Agent-Ready (IPC Socket):** Inspect UI snapshots, trigger actions, and stream events externally via a JSON Lines Unix domain socket.
-* 🛡️ **Transactional & Sandboxed:** Lua errors roll back cleanly without crashing the screen. Optional Linux `bubblewrap` sandbox isolates untrusted scripts.
-* ⚡ **Fast & Lightweight:** Pure Flexbox layout in **45 µs**, idle RAM **~14 MB RSS**, static binary **5.3 MB**. See [benchmarks](docs/benchmarks.md).
+* **Pure Go or Hybrid Go + Lua**: Build your entire TUI in type-safe Go (`QuickViewFunc`, `QuickView`, `Column`, `Row`, `Panel`, `Table`, `Input`), or move the view into `.lua` for instant hot-reload without changing a single line of your Go handlers.
+* **Zero Boilerplate vs. Bubble Tea**: No `Init() / Update(tea.Msg) / View() string` ceremony, no manual `tea.WindowSizeMsg` math, and no manual child message routing. Flexbox layout, 2D spatial focus navigation, two-way `Bind(key)` state sync, and widgets (`table`, `tree`, `list`, `input`, `textarea`, `viewport`, `filepicker`, `modal`) work automatically.
+* **Sub-Millisecond Cell-Diff Renderer**: Backbuffer cell-diffing (`cellBuffer`) + dirty-tracked Flexbox layout + cached grapheme/line measurements render a 300-node dashboard in **~460 µs with 12 heap allocations**.
+* **AI-Agent & Headless Ready**: Inspect and control any running app over a Unix domain socket (`--socket`) or test headless in microseconds via `LoadView` / `LoadViewFunc`.
 
 ---
 
-## Quickstart
+## Install
 
-### 1. Go library
-
-Requires **Go 1.26+**:
-
+### As a Go Library
 ```sh
-go get github.com/VintlGvard/LugoTUI/tui@latest
+go get github.com/VintlGvard/LugoTUI@latest
 ```
 
-Define declarative UI in `app.lua`:
-```lua
-local ui = require('ui')
-
-return {
-  api_version = 1,
-  view = function()
-    return ui.column {
-      padding = 1, gap = 1,
-      ui.text { text = "Hello from LugoTUI!", height = 1 },
-      ui.input { id = "name_in", bind = "name", placeholder = "Type your name...", height = 1 },
-      ui.text { id = "greeting", text = "Waiting for input...", height = 1 },
-      ui.button { id = "btn", text = "Uppercase & Save", on_click = "save", height = 1 }
-    }
-  end,
-  actions = {
-    save = function()
-      local name = ui.get("name") or "Stranger"
-      ui.set("name", string.upper(name))
-      ui.patch("greeting", { text = "Saved: " .. string.upper(name) })
-    end
-  }
-}
+### Standalone CLI Runner
+```sh
+go install github.com/VintlGvard/LugoTUI/cmd/lugotui@latest
 ```
 
-Run from `main.go`:
+---
+
+## Quick Start
+
+### 1. 100% Pure Go (Reactive `QuickViewFunc` — Zero Lua Required)
+
+Write a reactive view function in pure Go. When state changes via `rt.Set` / `rt.AddInt` or user typing in `lugo.Input("query")`, LugoTUI automatically reconciles the new widget tree while preserving keyboard focus, cursor position, selection, and scroll offsets:
+
 ```go
 package main
 
 import (
 	"log"
 
-	"github.com/VintlGvard/LugoTUI/tui"
+	lugo "github.com/VintlGvard/LugoTUI"
 )
 
 func main() {
-	p := tui.NewProgram(
-		tui.WithAppFile("app.lua"),
-		tui.WithAltScreen(true),
-		tui.WithMouse(true),
+	err := lugo.QuickViewFunc(
+		func(rt *lugo.Runtime) *lugo.Node {
+			return lugo.Column(
+				lugo.Panel("Service Monitor",
+					lugo.Textf("Filter: %s |Polls: %d", rt.String("query"), rt.Int("polls")).Bold(true).FG("cyan"),
+					lugo.Input("query").SetID("search").Placeholder("Filter services..."),
+					lugo.Row(
+						lugo.Button("Refresh", "refresh").SetID("btn_refresh"),
+						lugo.Button("Quit", "quit").SetID("btn_quit"),
+					).Gap(1),
+				).Grow(1).Padding(1).Gap(1),
+			).Padding(1)
+		},
+		map[string]lugo.ActionHandler{
+			"refresh": func(rt *lugo.Runtime, _ any) error {
+				return rt.AddInt("polls", 1)
+			},
+			"quit": func(_ *lugo.Runtime, _ any) error {
+				return lugo.ErrQuit
+			},
+		},
+		lugo.WithState("polls", 1),
 	)
-	if err := p.Run(); err != nil {
+	if err != nil {
 		log.Fatal(err)
 	}
 }
 ```
 
-```sh
-go run .
+### 2. 100% Pure Go (Retained `QuickView` + Two-Way `Bind`)
+
+Build the widget tree once and mutate bound state directly (`rt.Set("status", ...)`):
+
+```go
+view := lugo.Column(
+	lugo.Text("").Bind("status").FG("green").Height(1),
+	lugo.Input("name").Placeholder("Enter your name...").OnSubmit("greet").Height(1),
+	lugo.Button("Greet", "greet").Height(1),
+).Padding(1).Gap(1)
+
+err := lugo.QuickView(view, map[string]lugo.ActionHandler{
+	"greet": func(rt *lugo.Runtime, _ any) error {
+		return rt.Set("status", "Hello, "+rt.String("name")+"!")
+	},
+}, lugo.WithState("status", "Ready"))
 ```
 
-*Quit with `Ctrl+Q`. Edits to `app.lua` hot-reload live; `F5` reloads manually. For async workers and Go events, see the [worker example](examples/worker/).*
+### 3. Hybrid Go + Lua Live Hot-Reload (LugoTUI's Killer Feature)
 
-### 2. Standalone CLI
+Move your layout into `app.lua` to edit spacing, colors, and widgets while the app is running (**150ms live hot-reload** preserving state and focus). Widget events (`on_click = "greet"`, `on_submit = "greet"`) dispatch directly to your Go handlers without needing Lua `actions` boilerplate:
 
-Run Lua applications without writing Go:
+```lua
+-- app.lua
+local ui = require('ui')
 
-```sh
-# Via go install (Go 1.26+)
-go install github.com/VintlGvard/LugoTUI/cmd/lugotui@latest
-
-lugotui --app app.lua          # Run UI
-lugotui --app app.lua --check  # Headless validation
+return {
+    api_version = 1,
+    spatial_nav = true,
+    view = function()
+        return ui.column {
+            padding = 1, gap = 1,
+            ui.text { bind = "status", fg = "green", height = 1 },
+            ui.input { id = "name_in", bind = "name", placeholder = "Enter your name...", on_submit = "greet", height = 1 },
+            ui.button { id = "btn_greet", text = "Greet", on_click = "greet", height = 1 },
+        }
+    end,
+}
 ```
 
-Or download pre-built binaries from [Releases](https://github.com/VintlGvard/LugoTUI/releases/latest). See [CLI Installation Guide](docs/install.md) for PATH setup, checksums, and platform notes.
+```go
+// main.go — identical Go handlers!
+p := lugo.NewProgram(
+	lugo.WithAppFile("app.lua"),
+	lugo.WithState("status", "Ready"),
+	lugo.WithAction("greet", func(rt *lugo.Runtime, _ any) error {
+		return rt.Set("status", "Hello, "+rt.String("name")+"!")
+	}),
+)
+if err := p.Run(); err != nil {
+	log.Fatal(err)
+}
+```
 
 ---
 
-## Architecture: Go + Lua Model
+## LugoTUI vs. Bubble Tea
 
-LugoTUI follows a strict separation of concerns:
-
-1. **Lua owns the View:** Declares widget trees and handles synchronous UI mutations (`ui.set`, `ui.patch`, `ui.replace`) in a single-threaded transactional runtime.
-2. **Go owns Concurrency & I/O:** Runs databases, network calls, and background workers via `OnEvent` and `rt.StartTask(...)`, safely pushing results to Lua without data races.
-3. **External Agents via IPC:** Automate and test interfaces over a Unix domain socket (`--socket ./app.sock`) via JSON Lines protocol.
+| Capability | Bubble Tea + Lip Gloss + Bubbles | LugoTUI |
+| --- | --- | --- |
+| **Pure-Go Declarative UI** | Manual string concatenation in `View() string` | Fluent `*lugo.Node` Builder (`Column`, `Row`, `Panel`, `Table`, `Tree`, `Input`) |
+| **Layout Engine** | Manual `tea.WindowSizeMsg` width/height arithmetic | Built-in **Flexbox Layout** (`Grow`, `Shrink`, `Padding`, `Gap`, `Align`, `Justify`) |
+| **Focus & Navigation** | Manual focus index tracking & child `Update` routing | Automatic **Tab/Shift+Tab**, **2D Spatial Navigation**, & **Modal Focus Trap** |
+| **Two-Way State Binding** | Manual state copying to/from child models | Automatic `.Bind("key")` + `rt.String("key")` / `rt.Set("key", val)` |
+| **Live Hot-Reload** | None (requires full Go recompile & restart) | **150ms Lua Live Hot-Reload** preserving state & focus |
+| **300-Node Frame Cost** | Full string re-allocation + ANSI parsing | **~460 µs / 12 heap allocs** (`cellBuffer` diff renderer + layout dirty cache) |
+| **AI Agent / IPC Control** | None built-in | Built-in Unix domain socket JSON Lines IPC (`snapshot`, `apply`, `events`) |
 
 ---
 
@@ -121,7 +152,7 @@ LugoTUI follows a strict separation of concerns:
 * 🤖 **[Agent IPC Socket Protocol](docs/socket-protocol.md)** — JSON Lines API (`snapshot`, `apply`, `events`).
 * 🔒 **[Linux Sandbox](docs/sandbox.md)** — Bubblewrap containerization for untrusted UI scripts.
 * 💻 **[CLI Installation](docs/install.md)** — Binary archives, checksums, and environment configuration.
-* 🧠 **[Agent Skill](skills/lugotui/SKILL.md)** — AI coding agent guide for building LugoTUI applications.
+* 🧠 **[Developer & Agent Skill](skills/lugotui/SKILL.md)** — Complete Pure-Go and Go+Lua guide for developers and AI coding agents.
 
 ---
 
@@ -130,6 +161,7 @@ LugoTUI follows a strict separation of concerns:
 ```sh
 make run      # Run the demo app
 make test     # Run test suite with race detector
+make cover    # Run tests with coverage gate (>=80%)
 make check    # Headless parse/layout/render validation
 ```
 

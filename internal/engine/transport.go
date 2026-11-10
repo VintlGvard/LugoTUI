@@ -219,7 +219,7 @@ func (r *Runtime) AgentReply(data []byte) []byte {
 		r.ReconcileFocus()
 		return replyJSON(map[string]any{"revision": r.Revision}, e)
 	case "message":
-		if r.L == nil {
+		if r.isClosed() {
 			return replyJSON(nil, errors.New("runtime closed"))
 		}
 		e := r.Action(request.Action, request.Payload)
@@ -265,7 +265,7 @@ func strictJSON(data []byte, target any) error {
 }
 
 func (r *Runtime) ApplyJSON(data []byte) error {
-	if r.L == nil {
+	if r.isClosed() {
 		return errors.New("runtime closed")
 	}
 	var packet struct {

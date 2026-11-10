@@ -59,6 +59,11 @@ type Options struct {
 	Clipboard            engine.Clipboard
 	Screen               tcell.Screen
 	ReservedKeys         *ReservedKeys
+	View                 *engine.Node
+	ViewFunc             func(*engine.Runtime) *engine.Node
+	InitialData          map[string]any
+	GoActions            map[string]func(*engine.Runtime, map[string]any) error
+	AllowHostActions     bool
 	AppFile              string
 	Source               string
 	SocketPath           string
@@ -143,20 +148,36 @@ func RunOptions(options Options) error {
 	if options.Sandbox {
 		return Sandbox(options)
 	}
-	loadSource := func() (string, error) {
-		if options.Source != "" {
-			if len(options.Source) > 1<<20 {
-				return "", fmt.Errorf("application source exceeds 1 MiB")
+	allowHost := options.AllowHostActions || options.OnEvent != nil || len(options.Middlewares) > 0
+	var (
+		r          *engine.Runtime
+		err        error
+		loadSource func() (string, error)
+	)
+	switch {
+	case options.ViewFunc != nil:
+		loadSource = func() (string, error) { return "", nil }
+		r, err = engine.LoadViewFunc(options.ViewFunc, options.InitialData, options.GoActions, allowHost)
+	case options.View != nil:
+		loadSource = func() (string, error) { return "", nil }
+		r, err = engine.LoadNode(options.View, options.InitialData, options.GoActions, allowHost)
+	default:
+		loadSource = func() (string, error) {
+			if options.Source != "" {
+				if len(options.Source) > 1<<20 {
+					return "", fmt.Errorf("application source exceeds 1 MiB")
+				}
+				return options.Source, nil
 			}
-			return options.Source, nil
+			return readSource(options.AppFile)
 		}
-		return readSource(options.AppFile)
+		var source string
+		source, err = loadSource()
+		if err != nil {
+			return err
+		}
+		r, err = engine.LoadWithConfig(source, options.AppFile, options.InitialData, options.GoActions, allowHost)
 	}
-	source, err := loadSource()
-	if err != nil {
-		return err
-	}
-	r, err := engine.LoadNamed(source, options.AppFile)
 	if err != nil {
 		return err
 	}

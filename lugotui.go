@@ -15,6 +15,7 @@ type (
 	Option          = tui.Option
 	Options         = tui.Options
 	Runtime         = tui.Runtime
+	ViewFunc        = tui.ViewFunc
 	HostEvent       = tui.HostEvent
 	EventHandler    = tui.EventHandler
 	EventMiddleware = tui.EventMiddleware
@@ -30,6 +31,11 @@ type (
 	WidgetState     = tui.WidgetState
 	TaskResult      = tui.TaskResult
 	Theme           = tui.Theme
+	TableColumn     = tui.TableColumn
+	TreeItem        = tui.TreeItem
+	FileEntry       = tui.FileEntry
+	HelpBinding     = tui.HelpBinding
+	HighlightSpan   = tui.HighlightSpan
 )
 
 var (
@@ -38,13 +44,22 @@ var (
 	RunApp               = tui.RunApp
 	RunSource            = tui.RunSource
 	QuickRun             = tui.QuickRun
+	QuickView            = tui.QuickView
+	QuickViewFunc        = tui.QuickViewFunc
 	Run                  = tui.Run
 	RunOptions           = tui.RunOptions
 	Load                 = tui.Load
 	LoadNamed            = tui.LoadNamed
+	LoadView             = tui.LoadView
+	LoadViewFunc         = tui.LoadViewFunc
 	DefaultTheme         = tui.DefaultTheme
 	WithAppFile          = tui.WithAppFile
 	WithSource           = tui.WithSource
+	WithView             = tui.WithView
+	WithViewFunc         = tui.WithViewFunc
+	WithInitialData      = tui.WithInitialData
+	WithState            = tui.WithState
+	WithAction           = tui.WithAction
 	WithSocket           = tui.WithSocket
 	WithSandbox          = tui.WithSandbox
 	WithCheck            = tui.WithCheck
@@ -67,7 +82,40 @@ var (
 	WithFPS              = tui.WithFPS
 	WithoutPanicRecovery = tui.WithoutPanicRecovery
 	WithOnReady          = tui.WithOnReady
+
+	NewNode    = tui.NewNode
+	Column     = tui.Column
+	Row        = tui.Row
+	Box        = tui.Box
+	Overlay    = tui.Overlay
+	Spacer     = tui.Spacer
+	Panel      = tui.Panel
+	Scroll     = tui.Scroll
+	Modal      = tui.Modal
+	Text       = tui.Text
+	Textf      = tui.Textf
+	Button     = tui.Button
+	Input      = tui.Input
+	Textarea   = tui.Textarea
+	List       = tui.List
+	Table      = tui.Table
+	Tree       = tui.Tree
+	Viewport   = tui.Viewport
+	Filepicker = tui.Filepicker
+	Spinner    = tui.Spinner
+	Progress   = tui.Progress
+	Paginator  = tui.Paginator
+	Timer      = tui.Timer
+	Stopwatch  = tui.Stopwatch
+	Help       = tui.Help
+	Cursor     = tui.Cursor
+	If         = tui.If
+	IfElse     = tui.IfElse
 )
+
+func Map[T any](items []T, fn func(index int, item T) *Node) []*Node {
+	return tui.Map(items, fn)
+}
 
 func NewOSC52Clipboard(w io.Writer) *OSC52Clipboard {
 	return tui.NewOSC52Clipboard(w)

@@ -778,7 +778,13 @@ func (r *Runtime) changed(n *Node, s *WidgetState) error {
 	}
 	action := str(n, "on_change", "")
 	if action == "" {
-		r.Revision++
+		if r.ViewFunc != nil {
+			if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+				return err
+			}
+		} else {
+			r.Revision++
+		}
 		if boundKey != "" && !equalDataVal(oldBound, s.Value) {
 			r.notifyState(boundKey, oldBound, s.Value)
 		}

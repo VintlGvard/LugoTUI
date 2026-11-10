@@ -18,16 +18,63 @@ func WithSource(luaSource string) Option {
 	return func(o *Options) { o.Source = luaSource }
 }
 
+func WithView(root *Node) Option {
+	return func(o *Options) { o.View = root }
+}
+
+func WithViewFunc(fn ViewFunc) Option {
+	return func(o *Options) { o.ViewFunc = fn }
+}
+
+func WithInitialData(data map[string]any) Option {
+	return func(o *Options) {
+		if o.InitialData == nil {
+			o.InitialData = make(map[string]any, len(data))
+		}
+		for k, v := range data {
+			o.InitialData[k] = v
+		}
+	}
+}
+
+func WithState(key string, val any) Option {
+	return func(o *Options) {
+		if o.InitialData == nil {
+			o.InitialData = map[string]any{}
+		}
+		o.InitialData[key] = val
+	}
+}
+
 func WithTheme(theme Theme) Option {
 	return func(o *Options) { o.Theme = theme }
 }
 
 func WithOnEvent(fn EventHandler) Option {
-	return func(o *Options) { o.OnEvent = fn }
+	return func(o *Options) {
+		o.OnEvent = fn
+		o.AllowHostActions = true
+	}
+}
+
+func WithAction(name string, fn ActionHandler) Option {
+	if name == "" || fn == nil {
+		return func(*Options) {}
+	}
+	return WithHandlers(map[string]ActionHandler{name: fn})
 }
 
 func WithHandlers(handlers map[string]ActionHandler) Option {
 	return func(o *Options) {
+		if o.Actions == nil {
+			o.Actions = make(map[string]ActionHandler, len(handlers))
+		}
+		for k, v := range handlers {
+			if v != nil {
+				o.Actions[k] = v
+			}
+		}
+		o.AllowHostActions = true
 		prev := o.OnEvent
 		o.OnEvent = func(r *Runtime, ev HostEvent) error {
 			if h, ok := handlers[ev.Action]; ok && h != nil {
@@ -229,6 +276,20 @@ func RunSource(luaSource string, opts ...Option) error {
 func QuickRun(luaSource string, handlers map[string]ActionHandler, opts ...Option) error {
 	all := make([]Option, 0, len(opts)+2)
 	all = append(all, WithSource(luaSource), WithHandlers(handlers))
+	all = append(all, opts...)
+	return NewProgram(all...).Run()
+}
+
+func QuickView(root *Node, handlers map[string]ActionHandler, opts ...Option) error {
+	all := make([]Option, 0, len(opts)+2)
+	all = append(all, WithView(root), WithHandlers(handlers))
+	all = append(all, opts...)
+	return NewProgram(all...).Run()
+}
+
+func QuickViewFunc(fn ViewFunc, handlers map[string]ActionHandler, opts ...Option) error {
+	all := make([]Option, 0, len(opts)+2)
+	all = append(all, WithViewFunc(fn), WithHandlers(handlers))
 	all = append(all, opts...)
 	return NewProgram(all...).Run()
 }
