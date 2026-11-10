@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-11
+
+### Added
+- **Pure-Go View Builder DSL**: Fluent, type-safe constructors for all 22 widgets (`Column`, `Row`, `Box`, `Panel`, `Text`, `Textf`, `Button`, `Input`, `Textarea`, `List`, `Table`, `Tree`, `Viewport`, `Filepicker`, `Spinner`, `Progress`, `Paginator`, `Timer`, `Stopwatch`, `Help`, `Cursor`, `Custom`, `Modal`) enabling 100% Go applications without writing Lua.
+- **Zero-Boilerplate Inline Action Closures**: Directly attach logic via `.OnClickDo`, `.OnClickErr`, `.OnChangeText`, `.OnSubmitText`, `.OnSelectItem`, `.KeyDo`, and `.KeyErr` without registering string action names.
+- **Hierarchical Key Event Bubbling**: Hotkey shortcuts bubble up the container hierarchy from focused children through parent containers (`Column`, `Row`, `Box`, `Panel`, `Overlay`) to modal/root scope.
+- **Typed State & Lifecycle Helpers**: Added `rt.String()`, `rt.Int()`, `rt.Float()`, `rt.Bool()`, `rt.AddInt()`, `rt.ToggleBool()`, `rt.Update()`, `rt.Quit()`, and sentinel `ErrQuit`.
+- **Custom Canvas Widget**: Added `Custom(func(c Canvas))` and `.OnPaint()` allowing arbitrary terminal drawing with local coordinates (`SetCell`, `Print`, `Printf`, `Fill`, `LineH`, `LineV`, `IsFocused`).
+- **Customizable Border Shapes & Glyphs**: Supported `"rounded"`, `"double"`, `"thick"`, `"ascii"`, `"single"`, and custom 8-rune `BorderGlyphs` alongside `BorderFG`, `BorderBG`, and `TitleFG`.
+- **Button Styling & Affixes**: Added `.Plain()`, `.Chevrons()`, `.Parens()`, `.Filled()`, `.Prefix()`, and `.Suffix()`.
+- **Collection Cursor & Selection Styling**: Added `.CursorPrefix()`, `.SelectedFG()`, `.SelectedBG()`, and `.SelectedBold()`.
+- **Low-Level Key Interception**: Added `.OnRawKey(func(e *tcell.EventKey) bool)` for direct keyboard event consumption.
+- **Root Package Facade**: Mirrored the entire API under `github.com/VintlGvard/LugoTUI` (`lugotui.go`).
+
+### Changed
+- **Double-Buffered `cellBuffer` Diff Renderer**: Replaced direct tcell screen writing with an in-memory diff matrix, reducing heap allocations from 26,563 down to 18 allocs/op and render latency to 297 µs.
+- **Architecture Decomposition**: Split god-files into modular subsystems (`builder.go`, `hooks.go`, `primitives.go`, `primitive_tick.go`, `sandbox_linux.go`, `sandbox_other.go`, `signals_unix.go`, `signals_windows.go`).
+
+### Fixed
+- Fixed `cloneNode(nil)` nil-pointer dereference in `Runtime.Replace`.
+- Replaced panic on unexpected internal data type in TUI facade with safe nil return.
+- Fixed `Modal` type alignment to engine `panel` component.
+
 ## [0.1.6] - 2026-11-10
 
 ### Changed
