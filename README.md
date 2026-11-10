@@ -70,7 +70,12 @@ import (
 )
 
 func main() {
-	if err := tui.RunOptions(tui.Options{AppFile: "app.lua"}); err != nil {
+	p := tui.NewProgram(
+		tui.WithAppFile("app.lua"),
+		tui.WithAltScreen(true),
+		tui.WithMouse(true),
+	)
+	if err := p.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
