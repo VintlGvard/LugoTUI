@@ -24,11 +24,84 @@ func sortedChildren(n *Node) []*Node {
 	return children
 }
 
+func (r *Runtime) nodeVisibleForFocus(n *Node) bool {
+	if !focusable(n) {
+		return false
+	}
+	if r.Root != nil && (r.Root.Clip.W > 0 || r.Root.Clip.H > 0) {
+		return n.Clip.W > 0 && n.Clip.H > 0
+	}
+	return true
+}
+
+func (r *Runtime) navRuntime() *Runtime {
+	if len(r.Staged) == 0 || r.Root == nil {
+		return r
+	}
+	root := cloneNode(r.Root)
+	for _, op := range r.Staged {
+		target := findNode(root, op.ID)
+		if target == nil {
+			continue
+		}
+		if op.Replace {
+			if op.Tree == nil {
+				continue
+			}
+			var replace func(**Node)
+			replace = func(p **Node) {
+				if (*p).ID == op.ID {
+					*p = cloneNode(op.Tree)
+					return
+				}
+				for i := range (*p).Children {
+					replace(&(*p).Children[i])
+				}
+			}
+			replace(&root)
+		} else {
+			for k, v := range op.Props {
+				if v == nil {
+					delete(target.Props, k)
+				} else {
+					target.Props[k] = v
+				}
+			}
+		}
+	}
+	ids := map[string]*Node{}
+	var indexNodes func(*Node)
+	indexNodes = func(n *Node) {
+		if n == nil {
+			return
+		}
+		if n.ID != "" {
+			ids[n.ID] = n
+		}
+		for _, ch := range n.Children {
+			indexNodes(ch)
+		}
+	}
+	indexNodes(root)
+	if r.Root.Clip.W > 0 || r.Root.Clip.H > 0 {
+		Layout(root, r.Root.Rect.W, r.Root.Rect.H)
+	}
+	return &Runtime{
+		Root:          root,
+		Nodes:         ids,
+		Focus:         r.Focus,
+		PreviousFocus: r.PreviousFocus,
+		stagedFocus:   r.stagedFocus,
+		State:         r.State,
+		Data:          r.Data,
+	}
+}
+
 func (r *Runtime) nextFocusable(back bool) string {
 	nodes := []*Node{}
 	r.ReconcileFocus()
 	for n := range visibleNodes(r.scope()) {
-		if focusable(n) && n.Clip.W > 0 && n.Clip.H > 0 {
+		if r.nodeVisibleForFocus(n) {
 			nodes = append(nodes, n)
 		}
 	}
@@ -39,12 +112,18 @@ func (r *Runtime) nextFocusable(back bool) string {
 	if r.stagedFocus != nil {
 		current = *r.stagedFocus
 	}
-	index := 0
+	index := -1
 	for i, n := range nodes {
 		if n.ID == current {
 			index = i
 			break
 		}
+	}
+	if index < 0 {
+		if back {
+			return nodes[len(nodes)-1].ID
+		}
+		return nodes[0].ID
 	}
 	delta := 1
 	if back {
@@ -87,7 +166,7 @@ func (r *Runtime) findDirectionNode(curr *Node, dir string) *Node {
 	}
 	if targetID != "" {
 		for n := range visibleNodes(r.scope()) {
-			if n.ID == targetID && focusable(n) && n.Clip.W > 0 && n.Clip.H > 0 {
+			if n.ID == targetID && r.nodeVisibleForFocus(n) {
 				return n
 			}
 		}
@@ -314,15 +393,25 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 	}
 	var action string
 	if scope == r.Root {
-		for pattern, act := range r.keymap {
-			if act != "" && keyMatches(pattern, e) {
+		keys := make([]string, 0, len(r.keymap))
+		for k := range r.keymap {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, pattern := range keys {
+			if act := r.keymap[pattern]; act != "" && keyMatches(pattern, e) {
 				action = act
 				break
 			}
 		}
 	} else if scopeKm, ok := scope.Props["keymap"].(map[string]any); ok {
-		for pattern, actionVal := range scopeKm {
-			if s, ok := actionVal.(string); ok && s != "" && keyMatches(pattern, e) {
+		keys := make([]string, 0, len(scopeKm))
+		for k := range scopeKm {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, pattern := range keys {
+			if s, ok := scopeKm[pattern].(string); ok && s != "" && keyMatches(pattern, e) {
 				action = s
 				break
 			}
@@ -335,8 +424,13 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 	if n != nil {
 		if km, ok := n.Props["keymap"].(map[string]any); ok {
 			var act string
-			for pattern, actionVal := range km {
-				if s, ok := actionVal.(string); ok && s != "" && keyMatches(pattern, e) {
+			keys := make([]string, 0, len(km))
+			for k := range km {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, pattern := range keys {
+				if s, ok := km[pattern].(string); ok && s != "" && keyMatches(pattern, e) {
 					act = s
 					break
 				}

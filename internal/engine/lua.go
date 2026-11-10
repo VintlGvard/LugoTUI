@@ -162,16 +162,17 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 	}))
 	L.SetField(ui, "focus_direction", L.NewFunction(func(L *lua.LState) int {
 		dir := strings.ToLower(L.CheckString(1))
-		r.ReconcileFocus()
-		curr := r.Nodes[r.Focus]
+		nr := r.navRuntime()
+		nr.ReconcileFocus()
+		curr := nr.Nodes[nr.Focus]
 		if r.stagedFocus != nil {
-			curr = r.Nodes[*r.stagedFocus]
+			curr = nr.Nodes[*r.stagedFocus]
 		}
 		if curr == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
-		target := r.findDirectionNode(curr, dir)
+		target := nr.findDirectionNode(curr, dir)
 		if target != nil {
 			r.stagedFocus = &target.ID
 			L.Push(lua.LString(target.ID))
@@ -181,7 +182,8 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 		return 1
 	}))
 	L.SetField(ui, "focus_next", L.NewFunction(func(L *lua.LState) int {
-		target := r.nextFocusable(false)
+		nr := r.navRuntime()
+		target := nr.nextFocusable(false)
 		if target != "" {
 			r.stagedFocus = &target
 			L.Push(lua.LString(target))
@@ -191,7 +193,8 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 		return 1
 	}))
 	L.SetField(ui, "focus_prev", L.NewFunction(func(L *lua.LState) int {
-		target := r.nextFocusable(true)
+		nr := r.navRuntime()
+		target := nr.nextFocusable(true)
 		if target != "" {
 			r.stagedFocus = &target
 			L.Push(lua.LString(target))

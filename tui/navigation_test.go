@@ -3,6 +3,7 @@ package tui_test
 import (
 	"testing"
 
+	"github.com/VintlGvard/LugoTUI/tui"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -252,5 +253,36 @@ func TestProgrammaticGoFocusDirection(t *testing.T) {
 	}
 	if prev := r.FocusPrev(); prev != "b1" {
 		t.Fatalf("expected FocusPrev b1, got %s", prev)
+	}
+}
+
+func TestHeadlessAndStagedLuaFocusNavigation(t *testing.T) {
+	r, err := tui.Load(`return {
+		view = {
+			type = 'column',
+			id = 'root',
+			{ type = 'button', id = 'b1', text = 'One' },
+			{ type = 'box', id = 'slot' },
+		},
+		actions = {
+			spawn_and_focus = function()
+				ui.replace('slot', { type = 'button', id = 'b2', text = 'Two' })
+				local next_id = ui.focus_next()
+				host.dispatch('focused', { id = next_id })
+			end
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if got := r.FocusNext(); got != "b1" {
+		t.Fatalf("headless FocusNext before Draw returned %q, want b1", got)
+	}
+	if err := r.Action("spawn_and_focus", nil); err != nil {
+		t.Fatal(err)
+	}
+	if r.Focus() != "b2" {
+		t.Fatalf("staged ui.focus_next() after ui.replace focused %q, want b2", r.Focus())
 	}
 }

@@ -20,12 +20,17 @@ type TaskResult struct {
 type taskState struct {
 	next    uint64
 	active  map[uint64]context.CancelFunc
+	timers  map[uint64]*time.Timer
 	named   map[string]uint64
 	results chan TaskResult
 	done    chan struct{}
 }
 
 func (r *Runtime) StartTask(action string, work func(context.Context) (map[string]any, error)) (uint64, error) {
+	return r.startTaskAfter(action, 0, work)
+}
+
+func (r *Runtime) startTaskAfter(action string, delay time.Duration, work func(context.Context) (map[string]any, error)) (uint64, error) {
 	if r.L == nil {
 		return 0, errors.New("runtime closed")
 	}
@@ -36,7 +41,7 @@ func (r *Runtime) StartTask(action string, work func(context.Context) (map[strin
 		return 0, protocolError(CodeValidationError, fmt.Errorf("unknown action %s", action))
 	}
 	if r.tasks == nil {
-		r.tasks = &taskState{active: map[uint64]context.CancelFunc{}, named: map[string]uint64{}, results: make(chan TaskResult, 32), done: make(chan struct{})}
+		r.tasks = &taskState{active: map[uint64]context.CancelFunc{}, timers: map[uint64]*time.Timer{}, named: map[string]uint64{}, results: make(chan TaskResult, 32), done: make(chan struct{})}
 	}
 	t := r.tasks
 	if len(t.active) >= 32 {
@@ -46,7 +51,7 @@ func (r *Runtime) StartTask(action string, work func(context.Context) (map[strin
 	id := t.next
 	ctx, cancel := context.WithCancel(context.Background())
 	t.active[id] = cancel
-	go func() {
+	run := func() {
 		defer cancel()
 		result := TaskResult{ID: id, Action: action, owner: t}
 		func() {
@@ -65,12 +70,26 @@ func (r *Runtime) StartTask(action string, work func(context.Context) (map[strin
 		case <-ctx.Done():
 		case <-t.done:
 		}
-	}()
+	}
+	if delay > 0 {
+		t.timers[id] = time.AfterFunc(delay, func() {
+			if ctx.Err() != nil {
+				return
+			}
+			run()
+		})
+	} else {
+		go run()
+	}
 	return id, nil
 }
 
 func (r *Runtime) CancelTask(id uint64) {
 	if r.tasks != nil {
+		if timer := r.tasks.timers[id]; timer != nil {
+			timer.Stop()
+			delete(r.tasks.timers, id)
+		}
 		if cancel := r.tasks.active[id]; cancel != nil {
 			cancel()
 			delete(r.tasks.active, id)
@@ -98,18 +117,16 @@ func (r *Runtime) StartTaskNamed(name, action string, work func(context.Context)
 }
 
 func (r *Runtime) StartTaskDebounced(name string, delay time.Duration, action string, work func(context.Context) (map[string]any, error)) (uint64, error) {
-	return r.StartTaskNamed(name, action, func(ctx context.Context) (map[string]any, error) {
-		if delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, ctx.Err()
-			case <-timer.C:
-			}
+	if r.tasks != nil && name != "" {
+		if prevID, ok := r.tasks.named[name]; ok {
+			r.CancelTask(prevID)
 		}
-		return work(ctx)
-	})
+	}
+	id, err := r.startTaskAfter(action, delay, work)
+	if err == nil && r.tasks != nil && name != "" {
+		r.tasks.named[name] = id
+	}
+	return id, err
 }
 
 func (r *Runtime) CancelTaskNamed(name string) {
