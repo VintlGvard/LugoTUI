@@ -29,6 +29,7 @@ LugoTUI provides a type-safe, fluent Go API (`github.com/VintlGvard/LugoTUI` or 
   - `Stopwatch() *Node` — Elapsed time counter.
   - `Help(bindings ...HelpBinding) *Node` — Interactive keybinding bar.
   - `Cursor() *Node` — Custom blinking or steady terminal cursor.
+  - `Custom(paintFn func(c Canvas)) *Node` — Custom drawing widget with full access to terminal canvas, cells, lines, text, and local coordinates.
 - **Editors**:
   - `Input(bindKey string, placeholder ...string) *Node` — Single-line text input with selection and undo.
   - `Textarea(bindKey string, placeholder ...string) *Node` — Multi-line text editor with line numbers and grapheme navigation.
@@ -44,9 +45,16 @@ LugoTUI provides a type-safe, fluent Go API (`github.com/VintlGvard/LugoTUI` or 
   - `Map[T any](items []T, fn func(i int, item T) *Node) []*Node`
 
 ### Fluent Chainable `*Node` Methods
-- **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond)`
+- **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond)`, `.Focusable(bool)`
 - **Dimensions & Flex**: `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`, `.Grow(g)`, `.Shrink(s)`, `.Flex(g)`, `.Padding(p)`, `.Margin(m)`, `.Gap(g)`, `.Align(a)`, `.Justify(j)`, `.ZIndex(z)`, `.Absolute(left, top)`
-- **Appearance**: `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.Border(bool)`, `.Bordered()`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Italic(bool)`, `.Underline(bool)`, `.Wrap(bool)`
+- **Appearance & Custom Borders**:
+  - `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Italic(bool)`, `.Underline(bool)`, `.Wrap(bool)`
+  - `.Border("rounded" | "double" | "thick" | "ascii" | "single" | bool)` — customizable border shapes
+  - `.BorderFG(color)`, `.BorderBG(color)`, `.BorderColor(fg, bg)`, `.TitleFG(color)` — dedicated border and title styling
+  - `.BorderGlyphs(BorderGlyphs)` — full custom 8-rune border glyph sets (`Top`, `Bottom`, `Left`, `Right`, `TopLeft`, `TopRight`, `BottomLeft`, `BottomRight`)
+- **Widget-Specific Styling**:
+  - **Button**: `.Plain()` (no brackets), `.Chevrons()` (`< text >`), `.Parens()` (`( text )`), `.Filled()` (solid background block), `.Prefix(s)`, `.Suffix(s)`
+  - **List & Table**: `.CursorPrefix("❯ ")`, `.SelectedFG(color)`, `.SelectedBG(color)`, `.SelectedBold(bool)`
 - **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Modal(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.PageSize(n)`
 - **Zero-Boilerplate Inline Closures**:
   - `.OnClickDo(func())` / `.OnClickErr(func() error)` — inline button click handler
@@ -54,6 +62,19 @@ LugoTUI provides a type-safe, fluent Go API (`github.com/VintlGvard/LugoTUI` or 
   - `.OnSubmitText(func(text string))` — input submit (Enter) handler
   - `.OnSelectItem(func(index int, value any))` — collection activation handler
   - `.KeyDo(chord, func())` / `.KeyErr(chord, func() error)` — shortcut closure (bubbles up container hierarchy)
+  - `.OnRawKey(func(e *tcell.EventKey) bool)` — low-level keyboard event interception (returns true to consume)
+  - `.OnPaint(func(c Canvas))` — custom canvas drawing pass
+
+### Custom Canvas API (`Canvas`)
+Widgets created with `Custom(paintFn)` or nodes with `.OnPaint(paintFn)` receive a `Canvas` interface with local coordinates `(0, 0)` at content top-left:
+- `c.Width() int`, `c.Height() int`, `c.Bounds() Rect`
+- `c.SetCell(x, y int, r rune, st ...Style)`
+- `c.Print(x, y int, text string, st ...Style)`
+- `c.Printf(x, y int, st Style, format string, args ...any)`
+- `c.Fill(r Rect, ch rune, st ...Style)`
+- `c.LineH(x, y, w int, ch rune, st ...Style)`
+- `c.LineV(x, y, h int, ch rune, st ...Style)`
+- `c.IsFocused() bool`
 
 ---
 

@@ -192,8 +192,21 @@ func (r *Runtime) paintCollection(screen tcell.Screen, n *Node, st tcell.Style, 
 		it := items[s.Scroll+row]
 		y := body.Y + row*stride
 		style := st
+		cursorPrefix := str(n, "cursor_prefix", "")
+		if cursorPrefix == "" && flag(n, "show_cursor") {
+			cursorPrefix = "❯ "
+		}
 		if s.Scroll+row == s.Selected {
 			style = style.Reverse(true)
+			if sfg := str(n, "selected_fg", ""); sfg != "" {
+				style = style.Foreground(tcell.GetColor(sfg)).Reverse(false)
+			}
+			if sbg := str(n, "selected_bg", ""); sbg != "" {
+				style = style.Background(tcell.GetColor(sbg)).Reverse(false)
+			}
+			if flag(n, "selected_bold") {
+				style = style.Bold(true)
+			}
 		}
 		if n.Type == "filepicker" && !collectionFileAllowed(n, it) {
 			style = style.Dim(true)
@@ -204,6 +217,13 @@ func (r *Runtime) paintCollection(screen tcell.Screen, n *Node, st tcell.Style, 
 			continue
 		}
 		label := it.text
+		if cursorPrefix != "" {
+			if s.Scroll+row == s.Selected {
+				label = cursorPrefix + label
+			} else {
+				label = strings.Repeat(" ", textWidth(cursorPrefix)) + label
+			}
+		}
 		if n.Type == "tree" {
 			prefix := "  "
 			if it.branch {

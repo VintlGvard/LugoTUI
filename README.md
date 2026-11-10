@@ -51,10 +51,10 @@ func main() {
 				lugo.Textf("Filter: %s | Polls: %d", rt.String("query"), rt.Int("polls")).Bold(true).FG("cyan"),
 				lugo.Input("query").Placeholder("Filter services..."),
 				lugo.Row(
-					lugo.Button("Refresh").OnClickDo(func() { rt.AddInt("polls", 1) }),
-					lugo.Button("Quit").OnClickErr(rt.Quit),
+					lugo.Button("Refresh").Chevrons().OnClickDo(func() { rt.AddInt("polls", 1) }),
+					lugo.Button("Quit").Plain().OnClickErr(rt.Quit),
 				).Gap(1),
-			).Grow(1).Padding(1).Gap(1),
+			).Border("rounded").BorderFG("cyan").Grow(1).Padding(1).Gap(1),
 		).Padding(1).KeyDo("ctrl+q", func() { rt.Quit() })
 	}, nil, lugo.WithState("polls", 1))
 	if err != nil {
@@ -132,6 +132,7 @@ if err := p.Run(); err != nil {
 | **Live Hot-Reload** | None (requires full Go recompile & restart) | **150ms Lua Live Hot-Reload** preserving state & focus |
 | **300-Node Frame Cost** | Full string re-allocation + ANSI parsing | **~297 µs / 18 heap allocs** (`cellBuffer` diff renderer + layout dirty cache) |
 | **AI Agent / IPC Control** | None built-in | Built-in Unix domain socket JSON Lines IPC (`snapshot`, `apply`, `events`) |
+| **Custom Canvas & Styling** | String formatting & manual ANSI joins | Built-in `Custom(func(c Canvas))` with local coordinates, rounded/double/thick borders, custom glyphs |
 
 ---
 

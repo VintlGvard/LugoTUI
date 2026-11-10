@@ -234,7 +234,7 @@ func (r *Runtime) items(n *Node) []any { return r.Items(n) }
 
 func contentRect(n *Node) Rect {
 	p := int(num(n, "padding", 0))
-	if flag(n, "border") || n.Type == "panel" {
+	if hasB, _ := borderGlyphsFor(n); hasB {
 		p++
 	}
 	return Rect{n.Rect.X + p, n.Rect.Y + p, max(0, n.Rect.W-2*p), max(0, n.Rect.H-2*p)}
@@ -251,6 +251,111 @@ func (r *Runtime) scrollDigest() uint64 {
 		}
 	}
 	return h
+}
+
+func borderGlyphsFor(n *Node) (bool, BorderGlyphs) {
+	if bg, ok := n.Props["border_glyphs"].(BorderGlyphs); ok {
+		return true, bg
+	}
+	bVal := n.Props["border"]
+	styleName := str(n, "border_style", "")
+	if s, ok := bVal.(string); ok && s != "" && s != "false" {
+		styleName = s
+	}
+	hasBorder := flag(n, "border") || n.Type == "panel"
+	if s, ok := bVal.(string); ok && s != "" && s != "none" && s != "false" {
+		hasBorder = true
+	}
+	if !hasBorder || styleName == "none" {
+		return false, BorderGlyphs{}
+	}
+	switch strings.ToLower(styleName) {
+	case "rounded":
+		return true, BorderRounded
+	case "double":
+		return true, BorderDouble
+	case "thick", "heavy":
+		return true, BorderThick
+	case "ascii":
+		return true, BorderASCII
+	default:
+		return true, BorderSingle
+	}
+}
+
+type canvasImpl struct {
+	screen  tcell.Screen
+	cr      Rect
+	clip    Rect
+	focused bool
+	baseSt  tcell.Style
+}
+
+func (c *canvasImpl) Width() int      { return c.cr.W }
+func (c *canvasImpl) Height() int     { return c.cr.H }
+func (c *canvasImpl) Bounds() Rect    { return Rect{0, 0, c.cr.W, c.cr.H} }
+func (c *canvasImpl) IsFocused() bool { return c.focused }
+
+func (c *canvasImpl) SetCell(x, y int, r rune, st ...tcell.Style) {
+	if x < 0 || x >= c.cr.W || y < 0 || y >= c.cr.H {
+		return
+	}
+	s := c.baseSt
+	if len(st) > 0 {
+		s = st[0]
+	}
+	putRune(c.screen, c.cr.X+x, c.cr.Y+y, r, s, c.clip)
+}
+
+func (c *canvasImpl) Print(x, y int, text string, st ...tcell.Style) {
+	s := c.baseSt
+	if len(st) > 0 {
+		s = st[0]
+	}
+	curX := x
+	for _, g := range graphemes(text) {
+		gw := textWidth(g)
+		if curX >= 0 && curX < c.cr.W && y >= 0 && y < c.cr.H {
+			put(c.screen, c.cr.X+curX, c.cr.Y+y, g, s, c.clip)
+		}
+		curX += gw
+	}
+}
+
+func (c *canvasImpl) Printf(x, y int, st tcell.Style, format string, args ...any) {
+	c.Print(x, y, fmt.Sprintf(format, args...), st)
+}
+
+func (c *canvasImpl) Fill(r Rect, ch rune, st ...tcell.Style) {
+	s := c.baseSt
+	if len(st) > 0 {
+		s = st[0]
+	}
+	for y := r.Y; y < r.Y+r.H; y++ {
+		for x := r.X; x < r.X+r.W; x++ {
+			c.SetCell(x, y, ch, s)
+		}
+	}
+}
+
+func (c *canvasImpl) LineH(x, y, w int, ch rune, st ...tcell.Style) {
+	s := c.baseSt
+	if len(st) > 0 {
+		s = st[0]
+	}
+	for i := 0; i < w; i++ {
+		c.SetCell(x+i, y, ch, s)
+	}
+}
+
+func (c *canvasImpl) LineV(x, y, h int, ch rune, st ...tcell.Style) {
+	s := c.baseSt
+	if len(st) > 0 {
+		s = st[0]
+	}
+	for i := 0; i < h; i++ {
+		c.SetCell(x, y+i, ch, s)
+	}
 }
 
 func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
@@ -337,24 +442,52 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 			fill(target, n.Clip, st)
 		}
 		rect := n.Rect
-		if (flag(n, "border") || n.Type == "panel") && rect.W >= 2 && rect.H >= 2 {
-			putRune(target, rect.X, rect.Y, '┌', st, n.Clip)
-			putRune(target, rect.X+rect.W-1, rect.Y, '┐', st, n.Clip)
-			putRune(target, rect.X, rect.Y+rect.H-1, '└', st, n.Clip)
-			putRune(target, rect.X+rect.W-1, rect.Y+rect.H-1, '┘', st, n.Clip)
+		if hasB, bg := borderGlyphsFor(n); hasB && rect.W >= 2 && rect.H >= 2 {
+			borderSt := st
+			if bfg := str(n, "border_fg", str(n, "border_color", "")); bfg != "" {
+				borderSt = borderSt.Foreground(tcell.GetColor(bfg))
+			}
+			if bbg := str(n, "border_bg", ""); bbg != "" {
+				borderSt = borderSt.Background(tcell.GetColor(bbg))
+			}
+			putRune(target, rect.X, rect.Y, bg.TopLeft, borderSt, n.Clip)
+			putRune(target, rect.X+rect.W-1, rect.Y, bg.TopRight, borderSt, n.Clip)
+			putRune(target, rect.X, rect.Y+rect.H-1, bg.BottomLeft, borderSt, n.Clip)
+			putRune(target, rect.X+rect.W-1, rect.Y+rect.H-1, bg.BottomRight, borderSt, n.Clip)
 			for x := rect.X + 1; x < rect.X+rect.W-1; x++ {
-				putRune(target, x, rect.Y, '─', st, n.Clip)
-				putRune(target, x, rect.Y+rect.H-1, '─', st, n.Clip)
+				putRune(target, x, rect.Y, bg.Top, borderSt, n.Clip)
+				putRune(target, x, rect.Y+rect.H-1, bg.Bottom, borderSt, n.Clip)
 			}
 			for y := rect.Y + 1; y < rect.Y+rect.H-1; y++ {
-				putRune(target, rect.X, y, '│', st, n.Clip)
-				putRune(target, rect.X+rect.W-1, y, '│', st, n.Clip)
+				putRune(target, rect.X, y, bg.Left, borderSt, n.Clip)
+				putRune(target, rect.X+rect.W-1, y, bg.Right, borderSt, n.Clip)
 			}
-			put(target, rect.X+2, rect.Y, str(n, "title", ""), st, intersect(n.Clip, Rect{rect.X + 1, rect.Y, max(0, rect.W-2), 1}))
+			title := str(n, "title", "")
+			if title != "" {
+				titleSt := borderSt
+				if tfg := str(n, "title_fg", ""); tfg != "" {
+					titleSt = titleSt.Foreground(tcell.GetColor(tfg))
+				}
+				put(target, rect.X+2, rect.Y, title, titleSt, intersect(n.Clip, Rect{rect.X + 1, rect.Y, max(0, rect.W-2), 1}))
+			}
 		}
 		cr := contentRect(n)
 		clip := intersect(cr, n.Clip)
 		state := r.State[n.ID]
+		if n.CustomPaint != nil {
+			cv := &canvasImpl{
+				screen:  target,
+				cr:      cr,
+				clip:    clip,
+				focused: r.Focus == n.ID,
+				baseSt:  st,
+			}
+			n.CustomPaint(cv)
+			for _, c := range sortedChildren(n) {
+				paint(c, st)
+			}
+			return
+		}
 		if r.paintCollection(target, n, st, cr, clip) || r.paintPrimitive(target, n, st, cr, clip) {
 			for _, c := range sortedChildren(n) {
 				paint(c, st)
@@ -362,32 +495,55 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 			return
 		}
 		switch n.Type {
+		case "custom":
+			// Handled by CustomPaint or container children.
 		case "text", "button":
 			text := r.text(n)
 			if n.Type == "button" {
+				bStyle := str(n, "button_style", "")
+				prefix := str(n, "prefix", "")
+				suffix := str(n, "suffix", "")
+				if prefix == "" && suffix == "" {
+					switch strings.ToLower(bStyle) {
+					case "plain":
+						prefix, suffix = "", ""
+					case "parens":
+						prefix, suffix = "( ", " )"
+					case "chevrons":
+						prefix, suffix = "< ", " >"
+					case "filled":
+						prefix, suffix = " ", " "
+					default:
+						prefix, suffix = "[ ", " ]"
+					}
+				}
+				reqW := textWidth(text) + textWidth(prefix) + textWidth(suffix)
+				compact := strings.TrimSpace(prefix) + strings.TrimSpace(suffix)
 				if cr.W > 0 {
-					w := textWidth(text)
-					if cr.W >= w+4 {
-						text = "[ " + text + " ]"
-					} else if cr.W >= 4 {
+					if cr.W >= reqW {
+						text = prefix + text + suffix
+					} else if cr.W >= textWidth(prefix)+textWidth(suffix) {
+						avail := cr.W - textWidth(prefix) - textWidth(suffix)
 						inner := ""
 						curW := 0
 						for _, g := range graphemes(text) {
 							gw := textWidth(g)
-							if curW+gw > cr.W-4 {
+							if curW+gw > avail {
 								break
 							}
 							inner += g
 							curW += gw
 						}
-						text = "[ " + inner + " ]"
-					} else if cr.W >= 2 {
-						text = "[]"
+						text = prefix + inner + suffix
+					} else if compact != "" && cr.W >= textWidth(compact) {
+						text = compact
+					} else if compact != "" {
+						text = string([]rune(compact)[:1])
 					} else {
-						text = "["
+						text = ""
 					}
 				} else {
-					text = "[ " + text + " ]"
+					text = prefix + text + suffix
 				}
 			}
 			paintText(target, n, text, st, cr, clip)
@@ -401,14 +557,35 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 				if state.Selected >= state.Scroll+cr.H {
 					state.Scroll = max(0, state.Selected-cr.H+1)
 				}
+				cursorPrefix := str(n, "cursor_prefix", "")
+				if cursorPrefix == "" && flag(n, "show_cursor") {
+					cursorPrefix = "❯ "
+				}
 				for y := 0; y < cr.H && y+state.Scroll < len(items); y++ {
 					index := y + state.Scroll
 					ls := st
 					if index == state.Selected {
 						ls = ls.Reverse(true)
+						if sfg := str(n, "selected_fg", ""); sfg != "" {
+							ls = ls.Foreground(tcell.GetColor(sfg)).Reverse(false)
+						}
+						if sbg := str(n, "selected_bg", ""); sbg != "" {
+							ls = ls.Background(tcell.GetColor(sbg)).Reverse(false)
+						}
+						if flag(n, "selected_bold") {
+							ls = ls.Bold(true)
+						}
 					}
 					fill(target, intersect(Rect{cr.X, cr.Y + y, cr.W, 1}, clip), ls)
-					put(target, cr.X, cr.Y+y, fmt.Sprint(items[index]), ls, clip)
+					itemText := fmt.Sprint(items[index])
+					if cursorPrefix != "" {
+						if index == state.Selected {
+							itemText = cursorPrefix + itemText
+						} else {
+							itemText = strings.Repeat(" ", textWidth(cursorPrefix)) + itemText
+						}
+					}
+					put(target, cr.X, cr.Y+y, itemText, ls, clip)
 				}
 			}
 		case "input", "textarea":

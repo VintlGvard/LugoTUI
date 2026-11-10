@@ -12,6 +12,18 @@ type HelpBinding = engine.HelpBinding
 
 type HighlightSpan = engine.HighlightSpan
 
+type BorderGlyphs = engine.BorderGlyphs
+
+type Canvas = engine.Canvas
+
+var (
+	BorderSingle  = engine.BorderSingle
+	BorderRounded = engine.BorderRounded
+	BorderDouble  = engine.BorderDouble
+	BorderThick   = engine.BorderThick
+	BorderASCII   = engine.BorderASCII
+)
+
 func NewNode(kind string, children ...*Node) *Node {
 	return engine.NewNode(kind, children...)
 }
@@ -32,6 +44,10 @@ func Scroll(children ...*Node) *Node {
 
 func Modal(id, title string, children ...*Node) *Node {
 	return engine.Modal(id, title, children...)
+}
+
+func Custom(paintFn func(c Canvas)) *Node {
+	return engine.Custom(paintFn)
 }
 
 func Text(text string) *Node {

@@ -3,6 +3,8 @@ package engine
 import (
 	"fmt"
 	"maps"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 type TableColumn struct {
@@ -139,12 +141,67 @@ func (n *Node) Flex(g float64) *Node               { return n.Prop("grow", g) }
 func (n *Node) Padding(p int) *Node                { return n.Prop("padding", p) }
 func (n *Node) Margin(m int) *Node                 { return n.Prop("margin", m) }
 func (n *Node) Gap(g int) *Node                    { return n.Prop("gap", g) }
-func (n *Node) Border(v ...bool) *Node {
-	enabled := true
-	if len(v) > 0 {
-		enabled = v[0]
+func (n *Node) Border(v ...any) *Node {
+	if len(v) == 0 {
+		return n.Prop("border", true)
 	}
-	return n.Prop("border", enabled)
+	switch val := v[0].(type) {
+	case bool:
+		return n.Prop("border", val)
+	case string:
+		return n.Prop("border", val)
+	default:
+		return n.Prop("border", true)
+	}
+}
+func (n *Node) BorderStyle(style string) *Node                  { return n.Prop("border_style", style) }
+func (n *Node) BorderFG(color string) *Node                     { return n.Prop("border_fg", color) }
+func (n *Node) BorderBG(color string) *Node                     { return n.Prop("border_bg", color) }
+func (n *Node) BorderColor(fg string, bg ...string) *Node {
+	n.Prop("border_fg", fg)
+	if len(bg) > 0 && bg[0] != "" {
+		n.Prop("border_bg", bg[0])
+	}
+	return n
+}
+func (n *Node) BorderGlyphs(bg BorderGlyphs) *Node              { return n.Prop("border", true).Prop("border_glyphs", bg) }
+func (n *Node) TitleFG(color string) *Node                      { return n.Prop("title_fg", color) }
+
+func (n *Node) ButtonStyle(style string) *Node                  { return n.Prop("button_style", style) }
+func (n *Node) Plain() *Node                                    { return n.ButtonStyle("plain") }
+func (n *Node) Filled() *Node                                   { return n.ButtonStyle("filled") }
+func (n *Node) Chevrons() *Node                                 { return n.ButtonStyle("chevrons") }
+func (n *Node) Parens() *Node                                   { return n.ButtonStyle("parens") }
+func (n *Node) Prefix(p string) *Node                           { return n.Prop("prefix", p) }
+func (n *Node) Suffix(s string) *Node                           { return n.Prop("suffix", s) }
+
+func (n *Node) CursorPrefix(cp string) *Node                    { return n.Prop("cursor_prefix", cp) }
+func (n *Node) SelectedFG(color string) *Node                   { return n.Prop("selected_fg", color) }
+func (n *Node) SelectedBG(color string) *Node                   { return n.Prop("selected_bg", color) }
+func (n *Node) SelectedBold(v ...bool) *Node {
+	b := true
+	if len(v) > 0 {
+		b = v[0]
+	}
+	return n.Prop("selected_bold", b)
+}
+
+func (n *Node) Focusable(v ...bool) *Node {
+	b := true
+	if len(v) > 0 {
+		b = v[0]
+	}
+	return n.Prop("focusable", b)
+}
+
+func (n *Node) OnPaint(paintFn func(c Canvas)) *Node {
+	n.CustomPaint = paintFn
+	return n
+}
+
+func (n *Node) OnRawKey(keyFn func(e *tcell.EventKey) bool) *Node {
+	n.RawKey = keyFn
+	return n
 }
 func (n *Node) FG(color string) *Node              { return n.Prop("fg", color) }
 func (n *Node) BG(color string) *Node              { return n.Prop("bg", color) }
@@ -486,6 +543,12 @@ func Modal(id, title string, children ...*Node) *Node {
 		Title(title).
 		Border(true).
 		Modal(true)
+}
+
+func Custom(paintFn func(c Canvas)) *Node {
+	n := NewNode("custom")
+	n.CustomPaint = paintFn
+	return n
 }
 
 func Text(text string) *Node {

@@ -494,6 +494,9 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 	}
 	n := r.Nodes[r.Focus]
 	if n != nil {
+		if n.RawKey != nil && n.RawKey(e) {
+			return nil
+		}
 		if km, ok := n.Props["keymap"].(map[string]any); ok {
 			var act string
 			keys := make([]string, 0, len(km))

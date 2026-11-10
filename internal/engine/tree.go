@@ -9,6 +9,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 type Node struct {
@@ -31,6 +33,8 @@ type Node struct {
 	linesCacheValid     bool
 	linesCache          []string
 	inlineActions       map[string]GoActionFunc
+	CustomPaint         func(c Canvas)
+	RawKey              func(e *tcell.EventKey) bool
 }
 
 type nodeError struct {
@@ -103,7 +107,7 @@ func num(n *Node, key string, fallback float64) float64 {
 func flag(n *Node, key string) bool { v, _ := n.Props[key].(bool); return v }
 
 func focusable(n *Node) bool {
-	return !flag(n, "disabled") && !flag(n, "hidden") && (n.Type == "input" || n.Type == "textarea" || n.Type == "button" || n.Type == "list" || n.Type == "scroll" || n.Type == "table" || n.Type == "viewport" || n.Type == "tree" || n.Type == "filepicker" || n.Type == "paginator" || n.Type == "timer" || n.Type == "stopwatch" || n.Type == "help" || n.Type == "cursor")
+	return !flag(n, "disabled") && !flag(n, "hidden") && (n.Type == "input" || n.Type == "textarea" || n.Type == "button" || n.Type == "list" || n.Type == "scroll" || n.Type == "table" || n.Type == "viewport" || n.Type == "tree" || n.Type == "filepicker" || n.Type == "paginator" || n.Type == "timer" || n.Type == "stopwatch" || n.Type == "help" || n.Type == "cursor" || flag(n, "focusable") || n.RawKey != nil)
 }
 
 func cloneValue(v any, depth int) (any, error) {
@@ -133,6 +137,8 @@ func cloneValue(v any, depth int) (any, error) {
 		return copy, nil
 	case []string:
 		return append([]string(nil), value...), nil
+	case BorderGlyphs:
+		return v, nil
 	case nil, string, bool, int, int64, float64:
 		return v, nil
 	default:
@@ -227,7 +233,7 @@ func validateTree(root *Node) (map[string]*Node, error) {
 			return errors.New("tree exceeds limits")
 		}
 		switch n.Type {
-		case "box", "row", "column", "panel", "text", "input", "textarea", "button", "list", "scroll", "overlay", "table", "viewport", "tree", "filepicker", "spinner", "progress", "paginator", "timer", "stopwatch", "help", "cursor":
+		case "box", "row", "column", "panel", "text", "input", "textarea", "button", "list", "scroll", "overlay", "table", "viewport", "tree", "filepicker", "spinner", "progress", "paginator", "timer", "stopwatch", "help", "cursor", "custom":
 		default:
 			return fmt.Errorf("unknown component %q", n.Type)
 		}
@@ -280,11 +286,27 @@ func validateTree(root *Node) (map[string]*Node, error) {
 				if v != "absolute" && v != "relative" {
 					return errors.New("invalid position")
 				}
-			case "text", "title", "bind", "source", "on_submit", "on_change", "on_select", "on_click", "on_key", "fg", "bg", "wrap", "nav_up", "nav_down", "nav_left", "nav_right":
+			case "text", "title", "bind", "source", "on_submit", "on_change", "on_select", "on_click", "on_key", "fg", "bg", "wrap", "nav_up", "nav_down", "nav_left", "nav_right", "border_style", "border_fg", "border_bg", "border_color", "title_fg", "cursor_prefix", "button_style", "prefix", "suffix", "selected_fg", "selected_bg":
 				if _, ok := v.(string); !ok {
 					return fmt.Errorf("%s must be string", k)
 				}
-			case "border", "hidden", "disabled", "bold", "modal", "spatial_nav":
+			case "border":
+				switch b := v.(type) {
+				case bool:
+				case string:
+					switch strings.ToLower(b) {
+					case "single", "rounded", "double", "thick", "heavy", "ascii", "none", "true", "false":
+					default:
+						return fmt.Errorf("invalid border style %q", b)
+					}
+				default:
+					return errors.New("border must be boolean or string")
+				}
+			case "border_glyphs":
+				if _, ok := v.(BorderGlyphs); !ok {
+					return errors.New("border_glyphs must be BorderGlyphs")
+				}
+			case "hidden", "disabled", "bold", "modal", "spatial_nav", "selected_bold", "focusable", "show_cursor":
 				if _, ok := v.(bool); !ok {
 					return fmt.Errorf("%s must be boolean", k)
 				}

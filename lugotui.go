@@ -36,6 +36,16 @@ type (
 	FileEntry       = tui.FileEntry
 	HelpBinding     = tui.HelpBinding
 	HighlightSpan   = tui.HighlightSpan
+	BorderGlyphs    = tui.BorderGlyphs
+	Canvas          = tui.Canvas
+)
+
+var (
+	BorderSingle  = tui.BorderSingle
+	BorderRounded = tui.BorderRounded
+	BorderDouble  = tui.BorderDouble
+	BorderThick   = tui.BorderThick
+	BorderASCII   = tui.BorderASCII
 )
 
 var (
@@ -110,6 +120,7 @@ var (
 	Stopwatch  = tui.Stopwatch
 	Help       = tui.Help
 	Cursor     = tui.Cursor
+	Custom     = tui.Custom
 	If         = tui.If
 	IfElse     = tui.IfElse
 )
