@@ -5,6 +5,7 @@ import (
 	"math"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/gdamore/tcell/v2"
@@ -114,14 +115,23 @@ func validateEditor(n *Node) error {
 	return nil
 }
 
+var compiledRegexCache sync.Map
+
 func editorValidation(n *Node, value string) string {
 	pattern := str(n, "validation_pattern", "")
 	if pattern == "" {
 		return ""
 	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return err.Error()
+	var re *regexp.Regexp
+	if cached, ok := compiledRegexCache.Load(pattern); ok {
+		re = cached.(*regexp.Regexp)
+	} else {
+		var err error
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return err.Error()
+		}
+		compiledRegexCache.Store(pattern, re)
 	}
 	if re.MatchString(value) {
 		return ""

@@ -639,7 +639,10 @@ func (r *Runtime) paintViewport(screen tcell.Screen, n *Node, s *WidgetState, c 
 			x = 0
 			y++
 		}
-		if y >= s.Scroll && y < s.Scroll+cr.H {
+		if y >= s.Scroll+cr.H {
+			break
+		}
+		if y >= s.Scroll {
 			style := st
 			for _, v := range highlights {
 				m, ok := v.(map[string]any)

@@ -834,18 +834,27 @@ func (r *Runtime) Paste(text string) error {
 	if n == nil || (n.Type != "input" && n.Type != "textarea") {
 		return nil
 	}
+	var clean strings.Builder
+	clean.Grow(len(text))
 	if n.Type == "input" {
-		var clean strings.Builder
-		clean.Grow(len(text))
 		for _, c := range text {
-			if c == '\n' || c == '\r' {
+			if c == '\n' || c == '\r' || c == '\t' {
 				clean.WriteByte(' ')
-			} else if c >= 32 || c == '\t' {
+			} else if c >= 32 && c != 0x7f {
 				clean.WriteRune(c)
 			}
 		}
-		text = clean.String()
+	} else {
+		normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+		for _, c := range normalized {
+			if c == '\t' {
+				clean.WriteByte(' ')
+			} else if c == '\n' || (c >= 32 && c != 0x7f) {
+				clean.WriteRune(c)
+			}
+		}
 	}
+	text = clean.String()
 	s := r.State[n.ID]
 	changed, err := editorInsert(n, s, text)
 	if err != nil || !changed {

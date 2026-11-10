@@ -49,3 +49,42 @@ func TestNearestPositionPrefersClosestRow(t *testing.T) {
 		t.Fatalf("equal distances must keep first position: %d", got)
 	}
 }
+
+func TestLimitedLinesLeadingAndTrailingSpacesAndPasteSanitization(t *testing.T) {
+	if got := Lines("  hello", 6, true); !slices.Equal(got, []string{"  hell", "o"}) {
+		t.Fatalf("leading spaces wrap: got %q, want [\"  hell\" \"o\"]", got)
+	}
+	if got := Lines("ab ", 2, true); !slices.Equal(got, []string{"ab"}) {
+		t.Fatalf("trailing space wrap: got %q, want [\"ab\"]", got)
+	}
+	r, err := Load(`return {
+		view = {
+			type = 'column',
+			id = 'root',
+			{ type = 'input', id = 'in', width = 10, height = 1 },
+			{ type = 'textarea', id = 'ta', width = 10, height = 4 },
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.SetFocus("in"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Paste("a\tb\x00c"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.State["in"].Value; got != "a bc" {
+		t.Fatalf("input paste sanitization: got %q, want %q", got, "a bc")
+	}
+	if err := r.SetFocus("ta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Paste("line1\r\nline2\t\x00end"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.State["ta"].Value; got != "line1\nline2 end" {
+		t.Fatalf("textarea paste sanitization: got %q, want %q", got, "line1\nline2 end")
+	}
+}

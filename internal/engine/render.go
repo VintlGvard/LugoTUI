@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
@@ -65,18 +66,29 @@ func put(s tcell.Screen, x, y int, text string, st tcell.Style, clip Rect) {
 	}
 	g := uniseg.NewGraphemes(text)
 	for g.Next() {
-		v := g.Runes()
 		w := g.Width()
 		if w == 0 {
 			continue
 		}
 		if x >= clip.X && x+w <= clip.X+clip.W {
-			s.SetContent(x, y, v[0], v[1:], st)
+			cluster := g.Str()
+			first, size := utf8.DecodeRuneInString(cluster)
+			var comb []rune
+			if len(cluster) > size {
+				comb = []rune(cluster[size:])
+			}
+			s.SetContent(x, y, first, comb, st)
 		}
 		x += w
 		if x >= clip.X+clip.W {
 			break
 		}
+	}
+}
+
+func putRune(s tcell.Screen, x, y int, r rune, st tcell.Style, clip Rect) {
+	if x >= clip.X && x < clip.X+clip.W && y >= clip.Y && y < clip.Y+clip.H {
+		s.SetContent(x, y, r, nil, st)
 	}
 }
 
@@ -176,11 +188,17 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 		fill(s, n.Clip, st)
 		rect := n.Rect
 		if (flag(n, "border") || n.Type == "panel") && rect.W >= 2 && rect.H >= 2 {
-			put(s, rect.X, rect.Y, "┌"+strings.Repeat("─", rect.W-2)+"┐", st, n.Clip)
-			put(s, rect.X, rect.Y+rect.H-1, "└"+strings.Repeat("─", rect.W-2)+"┘", st, n.Clip)
+			putRune(s, rect.X, rect.Y, '┌', st, n.Clip)
+			putRune(s, rect.X+rect.W-1, rect.Y, '┐', st, n.Clip)
+			putRune(s, rect.X, rect.Y+rect.H-1, '└', st, n.Clip)
+			putRune(s, rect.X+rect.W-1, rect.Y+rect.H-1, '┘', st, n.Clip)
+			for x := rect.X + 1; x < rect.X+rect.W-1; x++ {
+				putRune(s, x, rect.Y, '─', st, n.Clip)
+				putRune(s, x, rect.Y+rect.H-1, '─', st, n.Clip)
+			}
 			for y := rect.Y + 1; y < rect.Y+rect.H-1; y++ {
-				put(s, rect.X, y, "│", st, n.Clip)
-				put(s, rect.X+rect.W-1, y, "│", st, n.Clip)
+				putRune(s, rect.X, y, '│', st, n.Clip)
+				putRune(s, rect.X+rect.W-1, y, '│', st, n.Clip)
 			}
 			put(s, rect.X+2, rect.Y, str(n, "title", ""), st, intersect(n.Clip, Rect{rect.X + 1, rect.Y, max(0, rect.W-2), 1}))
 		}
@@ -420,11 +438,19 @@ func paintText(screen tcell.Screen, n *Node, text string, base tcell.Style, cr, 
 			}
 			w := g.Width()
 			if w > 0 && x >= clip.X && x+w <= clip.X+clip.W && cr.Y+y >= clip.Y && cr.Y+y < clip.Y+clip.H {
-				v := g.Runes()
-				screen.SetContent(x, cr.Y+y, v[0], v[1:], st)
+				cluster := g.Str()
+				first, size := utf8.DecodeRuneInString(cluster)
+				var comb []rune
+				if len(cluster) > size {
+					comb = []rune(cluster[size:])
+				}
+				screen.SetContent(x, cr.Y+y, first, comb, st)
 			}
 			x += w
 			offset += len(g.Str())
+		}
+		if offset < len(text) && text[offset] == '\n' {
+			offset++
 		}
 	}
 }
@@ -456,11 +482,17 @@ func limitedLinesASCII(line string, width int, limit int, out []string) []string
 				trimmed := bytes.TrimRight(buf, " \t")
 				out = append(out, string(trimmed))
 				buf = buf[:0]
+				for i+1 < len(line) && (line[i+1] == ' ' || line[i+1] == '\t') {
+					i++
+				}
+				if i+1 >= len(line) {
+					return out
+				}
 				continue
 			}
 			cut := bytes.LastIndexAny(buf, " \t")
-			if cut > 0 {
-				trimmed := bytes.TrimRight(buf[:cut], " \t")
+			trimmed := bytes.TrimRight(buf[:max(0, cut)], " \t")
+			if cut > 0 && len(trimmed) > 0 {
 				out = append(out, string(trimmed))
 				rem := bytes.TrimLeft(buf[cut+1:], " \t")
 				buf = append(buf[:0], rem...)
@@ -506,6 +538,7 @@ func LimitedLines(text string, width int, wrap bool, limit int) []string {
 		}
 		current := ""
 		w := 0
+		wrappedOnSpace := false
 		iterator := uniseg.NewGraphemes(line)
 		for iterator.Next() {
 			if len(out) >= limit {
@@ -513,16 +546,24 @@ func LimitedLines(text string, width int, wrap bool, limit int) []string {
 			}
 			g := iterator.Str()
 			gw := iterator.Width()
+			if wrappedOnSpace {
+				if strings.TrimSpace(g) == "" {
+					continue
+				}
+				wrappedOnSpace = false
+			}
 			if w+gw > width && current != "" {
 				if strings.TrimSpace(g) == "" {
 					out = append(out, strings.TrimRight(current, " \t"))
 					current = ""
 					w = 0
+					wrappedOnSpace = true
 					continue
 				}
 				cut := strings.LastIndexAny(current, " \t")
-				if cut > 0 {
-					out = append(out, strings.TrimRight(current[:cut], " \t"))
+				trimmed := strings.TrimRight(current[:max(0, cut)], " \t")
+				if cut > 0 && len(trimmed) > 0 {
+					out = append(out, trimmed)
 					current = strings.TrimLeft(current[cut+1:], " \t")
 					w = textWidth(current)
 					if w+gw > width && current != "" {
@@ -548,7 +589,9 @@ func LimitedLines(text string, width int, wrap bool, limit int) []string {
 		if len(out) >= limit {
 			return out
 		}
-		out = append(out, current)
+		if !wrappedOnSpace || current != "" || len(line) == 0 {
+			out = append(out, current)
+		}
 	}
 	return out
 }
