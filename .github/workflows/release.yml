@@ -22,12 +22,12 @@ jobs:
       EXPECTED_COMMIT: ${{ github.sha }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@v5
         with:
           go-version: stable
       - name: Test exact tag commit

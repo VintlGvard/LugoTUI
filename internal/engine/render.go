@@ -180,13 +180,16 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 	s.Clear()
 	s.HideCursor()
 	cursorY := -1
-	var paint func(*Node)
-	paint = func(n *Node) {
+	var paint func(*Node, tcell.Style)
+	paint = func(n *Node, bgStyle tcell.Style) {
 		if flag(n, "hidden") || n.Clip.W == 0 || n.Clip.H == 0 {
 			return
 		}
 		st := r.Theme.style(n, r.Focus == n.ID)
-		fill(s, n.Clip, st)
+		forceFill := str(n, "position", "") == "absolute" || num(n, "z_index", 0) != 0 || flag(n, "modal")
+		if forceFill || st != bgStyle {
+			fill(s, n.Clip, st)
+		}
 		rect := n.Rect
 		if (flag(n, "border") || n.Type == "panel") && rect.W >= 2 && rect.H >= 2 {
 			putRune(s, rect.X, rect.Y, '┌', st, n.Clip)
@@ -208,7 +211,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 		state := r.State[n.ID]
 		if r.paintCollection(s, n, st, cr, clip) || r.paintPrimitive(s, n, st, cr, clip) {
 			for _, c := range sortedChildren(n) {
-				paint(c)
+				paint(c, st)
 			}
 			return
 		}
@@ -363,10 +366,10 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 			}
 		}
 		for _, c := range sortedChildren(n) {
-			paint(c)
+			paint(c, st)
 		}
 	}
-	paint(r.Root)
+	paint(r.Root, tcell.StyleDefault)
 	if diagnostic != "" && h > 0 {
 		st := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorMaroon)
 		fill(s, Rect{0, h - 1, w, 1}, st)

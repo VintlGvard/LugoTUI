@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"debug/elf"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,20 @@ import (
 
 	"github.com/VintlGvard/LugoTUI/internal/engine"
 )
+
+func isDynamicallyLinkedELF(path string) bool {
+	f, err := elf.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_INTERP {
+			return true
+		}
+	}
+	return false
+}
 
 func Sandbox(options Options) error {
 	if options.OnEvent != nil || options.ReservedKeys != nil || options.Theme != (engine.Theme{}) {
@@ -37,9 +52,16 @@ func Sandbox(options Options) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"--as=1073741824", "--cpu=120", "--nofile=64", "--", bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--setenv", "TERM", os.Getenv("TERM"), "--setenv", "LANG", "C.UTF-8", "--tmpfs", "/", "--proc", "/proc", "--dev", "/dev", "--ro-bind", binary, "/app", "--chdir", "/"}
+	if isDynamicallyLinkedELF(binary) {
+		return errors.New("sandbox requires a static binary (build with CGO_ENABLED=0); current executable is dynamically linked")
+	}
+	args := []string{"--as=4294967296", "--cpu=120", "--nofile=64", "--", bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--setenv", "TERM", os.Getenv("TERM"), "--setenv", "LANG", "C.UTF-8", "--setenv", "GOMEMLIMIT", "512MiB", "--tmpfs", "/", "--proc", "/proc", "--dev", "/dev", "--ro-bind", binary, "/app", "--chdir", "/"}
 	if options.AppFile != "" {
 		path, err := filepath.Abs(options.AppFile)
+		if err != nil {
+			return err
+		}
+		path, err = filepath.EvalSymlinks(path)
 		if err != nil {
 			return err
 		}
