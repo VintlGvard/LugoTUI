@@ -1,47 +1,62 @@
 # Architecture, Embedding & Engine Limits
 
-This document details the internal design of LugoTUI, directory layout conventions, Go integration models (Managed Runner vs. Low-level Embedding), concurrency and goroutine ownership rules, and engine capacity limits.
+This document details the internal design of LugoTUI, directory layout conventions, Go integration models (Pure-Go Reactive/Retained vs. Managed Runner vs. Low-level Embedding), concurrency and goroutine ownership rules, and engine capacity limits.
 
 ---
 
 ## 1. Project Structure & Dependency Graph
 
 ```text
-cmd/lugotui/main.go          executable entry point
+lugotui.go                   root library facade (package lugotui)
+cmd/lugotui/main.go          standalone CLI executable entry point
 tui/
-  tui.go                   public runtime wrapper and component types
+  tui.go                   public runtime wrapper, types, and Options
+  program.go               Program runner, functional options, and external control
+  builder.go               Pure-Go View Builder DSL constructors
   *_test.go                public API, runner options and integration test suite
 internal/engine/
   runtime.go               lifecycle, state restoration, transactions and actions
-  tree.go                  nodes, properties, validation and model limits
+  tree.go                  nodes, properties, validation, auto-assign IDs and model limits
+  builder.go               Pure-Go builder AST constructors and chainable node methods
+  hooks.go                 Renderer, Clipboard, OSC52Clipboard, StateObserver interfaces
   lua.go                   Lua setup, bindings and Go/Lua conversion
   layout.go                intrinsic sizing, flex allocation and placement
-  render.go                painting, styles, rich text and Unicode wrapping
-  input.go                 keyboard, mouse, focus and editor state
+  render.go                cellBuffer diff-painting, styles, rich text and Unicode wrapping
+  input.go                 keyboard, mouse, focus, key event bubbling and editor state
+  editors.go               input/textarea validation, regex cache and grapheme offsets
+  primitives.go            primitive state, properties, and validation
+  primitive_tick.go        timer, stopwatch, and primitive tick/paint/input logic
+  collections.go           collection items, state, and validation
+  collection_render.go     table, tree, list, viewport, filepicker painting
+  collection_input.go      collection keyboard and mouse interaction
   transport.go             Unix socket, JSON operations and snapshots
-  tasks.go                 worker lifecycle and cancellation
+  tasks.go                 worker lifecycle, cancellation and timer-first debouncing
   *_test.go                engine unit tests, widgets, layout, limits and transport
 internal/assets/
   demo.lua                 bundled catalog Lua source
   assets.go                embed.FS and string exports for embedded resources
   assets_test.go           embedded assets verification
 internal/runner/
-  run.go                   CLI adapter, Options and terminal lifecycle
-  sandbox.go               Linux namespace sandbox runner
+  run.go                   CLI adapter, Options, event loop and terminal lifecycle
+  sandbox.go               platform-independent sandbox interface
+  sandbox_linux.go         Linux namespace sandbox runner (bubblewrap + prlimit)
+  sandbox_other.go         non-Linux sandbox fallback
+  signals_unix.go          POSIX signal handling (SIGWINCH, SIGHUP, SIGTERM, SIGINT)
+  signals_windows.go       Windows signal handling
   run_test.go              runner unit tests
 ```
 
 ### Dependency Rules
-Users import only `github.com/VintlGvard/LugoTUI/tui`. Dependencies are strictly one-way:
-- Public facade (`tui`) depends on `internal/runner` and `internal/engine`.
+Users import `github.com/VintlGvard/LugoTUI` (root facade) or `github.com/VintlGvard/LugoTUI/tui`. Dependencies are strictly one-way:
+- Public facade (`lugotui` / `tui`) depends on `internal/runner` and `internal/engine`.
 - `internal/runner` depends on `internal/engine`.
 - `internal/engine` embeds assets via `internal/assets`.
 - `internal/engine` does **not** parse CLI flags, open application files, subscribe to OS signals, or own the terminal loop.
-- Engine modules remain in one package because they share the same mutable node tree and single-goroutine ownership; splitting them into sub-packages would add boilerplate adapters without actual isolation.
+- Engine modules remain in one package because they share the same mutable node tree and single-goroutine ownership.
 - The public runtime wraps the private engine; getters return detached data copies, and mutations use validated methods.
 
 ### Extension Guide
-- **Add a component:** Constructor in `internal/engine/lua.go`, property validation in `internal/engine/tree.go`, painting in `internal/engine/render.go`, interaction in `internal/engine/input.go`.
+- **Add a component:** Constructor in `internal/engine/builder.go` and `internal/engine/lua.go`, property validation in `internal/engine/tree.go`, painting in `internal/engine/render.go`, interaction in `internal/engine/input.go`.
 - **Add a Lua operation:** Binding in `internal/engine/lua.go`, atomic application in `internal/engine/runtime.go`.
 - **Transport changes:** Belong in `internal/engine/transport.go`, never in the terminal loop.
 - **Verification:** Run `make test check`. Benchmark checks: `go test ./tui -run '^$' -bench . -benchmem`. Integration checks: `go test ./tui`. External Lua applications can live anywhere selected with `--app`.
@@ -50,12 +65,15 @@ Users import only `github.com/VintlGvard/LugoTUI/tui`. Dependencies are strictly
 
 ## 2. Mental Model & Go Entry Points
 
-The runtime retains a validated node tree, an explicit model, and editor state. Lua actions stage tree modifications; successful actions commit them atomically. `Draw` calculates Flexbox layout and paints the current tree; it does not re-invoke the Lua view factory.
+The runtime retains a validated node tree, an explicit model, and editor state. Layout calculations use dirty-tracking (`scrollDigest`, `layoutValid`), and terminal output uses a double-buffered cell-diff matrix (`cellBuffer`).
 
-Choose one Go integration path:
+Choose your Go integration path:
 
-- **Managed Runner (`tui.RunOptions`):** Owns terminal setup (`tcell`), input events, OS signals, hot-reload file watching, drawing, and task execution. Handle Lua `host.dispatch` events in `OnEvent`; launch blocking work via `StartTask`. This is the recommended default.
-- **Low-level Embedding (`tui.Load`):** Creates only a headless runtime. Your own event loop owns the screen and calls `Key`, `Mouse`, `Paste`, `Draw`, `DrainEvents`, and `HandleTask`. Use this when integrating into an existing loop or controlling terminal lifecycle directly.
+- **Pure-Go Reactive (`lugotui.QuickViewFunc` / `tui.WithViewFunc`):** Write a `func(rt *Runtime) *Node` view function. Zero Lua VM overhead. LugoTUI automatically reconciles new trees, preserving widget focus, cursor position, selection, and scroll offsets.
+- **Pure-Go Retained (`lugotui.QuickView` / `tui.WithView`):** Build the tree once; mutate via two-way `Bind` or surgical `rt.Set` / `rt.Patch`.
+- **Hybrid Go + Lua Live Hot-Reload (`lugotui.RunApp` / `tui.WithAppFile`):** Full 150ms live hot-reload for UI layout and themes without restarting Go. Widget events dispatch directly to Go handlers without Lua boilerplate.
+- **Program Runner (`lugotui.NewProgram`):** Full control with functional options (`WithMiddleware`, `WithInputFilter`, `WithStateObserver`, `WithRenderer`, `WithClipboard`) and thread-safe control from other goroutines (`Send`, `Set`, `Patch`, `Reload`, `Quit`).
+- **Low-level Embedding (`tui.Load` / `tui.LoadView`):** Creates only a headless runtime. Your own event loop owns the screen and calls `Key`, `Mouse`, `Paste`, `Draw`, `DrainEvents`, and `HandleTask`.
 
 ---
 
@@ -254,27 +272,28 @@ goarch: amd64
 pkg: github.com/VintlGvard/LugoTUI/internal/engine
 cpu: 12th Gen Intel(R) Core(TM) i5-12450H
 BenchmarkVisibleNodes-12    	  117946	      9976 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLargeScene-12      	    2869	    426667 ns/op	   50240 B/op	      12 allocs/op
+BenchmarkLargeScene-12      	    2359	    535089 ns/op	   50240 B/op	      12 allocs/op
 BenchmarkLayout-12          	   25378	     47100 ns/op	     768 B/op	      11 allocs/op
 
 pkg: github.com/VintlGvard/LugoTUI/tui
 cpu: 12th Gen Intel(R) Core(TM) i5-12450H
 BenchmarkInitLoad-12              	     292	   4137183 ns/op	 2591032 B/op	   35525 allocs/op
 BenchmarkLayoutPass-12            	   25824	     47256 ns/op	     768 B/op	      11 allocs/op
-BenchmarkRenderDiffPass-12        	     474	   2405126 ns/op	  276018 B/op	   42319 allocs/op
+BenchmarkRenderDiffPass-12        	    4129	    297008 ns/op	     248 B/op	      18 allocs/op
 BenchmarkStateMutation-12         	    6831	    165116 ns/op	   55768 B/op	     419 allocs/op
 BenchmarkStateMutationPatch-12    	     444	   2649788 ns/op	  331930 B/op	   42590 allocs/op
 BenchmarkLargeTextDraw-12         	    1208	    968547 ns/op	  237698 B/op	   25611 allocs/op
-BenchmarkTextareaCachedDraw-12    	    2468	    472362 ns/op	   39632 B/op	    6790 allocs/op
+BenchmarkTextareaCachedDraw-12    	    6106	    194894 ns/op	       0 B/op	       0 allocs/op
 ```
 
 #### Technical Rationale for Performance
 1. **In-Memory Retained Tree:** Direct pointer traversal (`*Node`) eliminates IPC and JSON serialization overhead during frame updates. Tree mutations clone only modified subtrees transactionally.
 2. **Zero Reflection in Hot Paths:** Traversal, layout calculations, and rendering use typed switch dispatch and fast property accessors without Go runtime `reflect.Value` costs.
-3. **Double-Buffered Cell Diffing (`tcell`):** Writes characters to an in-memory matrix. Only mutated cells and terminal escape sequences are sent over stdout to the physical terminal emulator.
-4. **Buffer & Measurement Reuse:**
+3. **Double-Buffered Cell Diffing (`cellBuffer` + `tcell`):** Writes characters to an in-memory double-buffer diff matrix. Only mutated cells are sent to `tcell` and emitted over stdout as terminal escape sequences.
+4. **Layout Dirty Cache:** Unchanged frames skip expensive Flexbox calculations via `scrollDigest` and `layoutValid` state tracking.
+5. **Buffer & Measurement Reuse:**
    - Multi-line text editors reuse cached grapheme and line-break offsets (`EditorIndex`), recalculating only on content mutations or container resizes.
-   - Viewport clipping terminates rune iteration early as soon as bounds are reached.
+   - Text rendering caches split lines and skips off-screen lines immediately after reaching viewport boundaries (`0 B/op`, `0 allocs/op` on cached draws).
    - Visible node collection allocates zero heap memory (`0 B/op`, `0 allocs/op`).
 
 ### Architectural Boundaries & Ceilings

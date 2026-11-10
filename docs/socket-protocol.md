@@ -9,7 +9,7 @@ LugoTUI provides an optional Unix Domain Socket interface using a **JSON Lines**
 - **Socket Creation:** Configured via `--socket /path/to/socket.sock` in the CLI or `Options.SocketPath` in Go.
 - **Filesystem Permissions:** The socket is created with strict file permissions **`0600`** (read/write only by the creating user). Existing socket paths are not overwritten.
 - **Connection Limits:** Supports up to **4 concurrent connections**.
-- **Timeouts:** Enforces **2-second read and write deadlines** per operation.
+- **Timeouts & Keep-Alive:** Persistent connections remain open while idle (`SetReadDeadline(time.Time{})`). A 2-second timeout applies only once bytes begin arriving for an in-flight frame or write operation.
 - **Thread Safety:** Runtime message processing remains strictly serialized on the runtime owner goroutine.
 - **Lifecycle:** The managed runner automatically closes all active client connections and unlinks the socket file on shutdown.
 - **Low-level Embedding:** Embedders can decode JSON Lines and feed requests directly to `Runtime.AgentReply(data []byte) []byte` without running the network listener.

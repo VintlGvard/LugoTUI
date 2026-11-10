@@ -1,10 +1,63 @@
-# Widgets & Lua Contract
+# Widgets, Pure-Go DSL & Lua Contract
 
-This document provides a complete reference for the LugoTUI declarative widget system, the Lua application contract, lifecycle rules, Flexbox layout properties, and interaction behaviors.
+This document provides a complete reference for the LugoTUI declarative widget system, the Pure-Go View Builder DSL, the Lua application contract, lifecycle rules, Flexbox layout properties, and interaction behaviors.
 
 ---
 
-## 1. Lua Application Contract
+## 1. Pure-Go View Builder DSL
+
+LugoTUI provides a type-safe, fluent Go API (`github.com/VintlGvard/LugoTUI` or `github.com/VintlGvard/LugoTUI/tui`) for building declarative widget trees.
+
+### Constructors
+- **Containers**:
+  - `Column(children ...*Node) *Node` — Flex container with vertical column direction.
+  - `Row(children ...*Node) *Node` — Flex container with horizontal row direction.
+  - `Box(children ...*Node) *Node` — Generic flex container.
+  - `Panel(title string, children ...*Node) *Node` — Styled container with title, border, and padding.
+  - `Scroll(children ...*Node) *Node` — Scrollable container.
+  - `Overlay(children ...*Node) *Node` — Floating container placed above standard layout flow.
+  - `Modal(id, title string, children ...*Node) *Node` — Modal dialog (`modal: true`, `border: true`) that traps focus and auto-closes on `Escape`.
+  - `Spacer() *Node` — Flex space consumer (`Box().Grow(1)`).
+- **Primitives & Indicators**:
+  - `Text(text string) *Node` — Static or bound text display.
+  - `Textf(format string, args ...any) *Node` — Formatted text display.
+  - `Button(label string, onClick ...string) *Node` — Clickable button.
+  - `Spinner(preset ...string) *Node` — Animated spinner (12 presets).
+  - `Progress(percent float64) *Node` — Progress bar (`0.0` .. `1.0`).
+  - `Paginator(page, perPage, total int) *Node` — Pagination control.
+  - `Timer(durationMs int, onTimeout ...string) *Node` — Countdown timer.
+  - `Stopwatch() *Node` — Elapsed time counter.
+  - `Help(bindings ...HelpBinding) *Node` — Interactive keybinding bar.
+  - `Cursor() *Node` — Custom blinking or steady terminal cursor.
+- **Editors**:
+  - `Input(bindKey string, placeholder ...string) *Node` — Single-line text input with selection and undo.
+  - `Textarea(bindKey string, placeholder ...string) *Node` — Multi-line text editor with line numbers and grapheme navigation.
+- **Collections**:
+  - `List(items ...string) *Node` — List view with optional live fuzzy filtering (`.Filterable(true)`).
+  - `Table(columns []TableColumn, rows [][]string) *Node` — Data table with columns and cell alignment.
+  - `Tree(items ...TreeItem) *Node` — Hierarchical tree widget with collapsible branches.
+  - `Viewport(text string, highlights ...HighlightSpan) *Node` — Scrollable text view with Vim navigation.
+  - `Filepicker(entries ...FileEntry) *Node` — Host-supplied filesystem picker.
+- **Conditional & List Utilities**:
+  - `If(cond bool, node *Node) *Node` — Renders `node` if true, nil otherwise (containers automatically ignore nil children).
+  - `IfElse(cond bool, thenNode, elseNode *Node) *Node`
+  - `Map[T any](items []T, fn func(i int, item T) *Node) []*Node`
+
+### Fluent Chainable `*Node` Methods
+- **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond)`
+- **Dimensions & Flex**: `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`, `.Grow(g)`, `.Shrink(s)`, `.Flex(g)`, `.Padding(p)`, `.Margin(m)`, `.Gap(g)`, `.Align(a)`, `.Justify(j)`, `.ZIndex(z)`, `.Absolute(left, top)`
+- **Appearance**: `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.Border(bool)`, `.Bordered()`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Italic(bool)`, `.Underline(bool)`, `.Wrap(bool)`
+- **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Modal(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.PageSize(n)`
+- **Zero-Boilerplate Inline Closures**:
+  - `.OnClickDo(func())` / `.OnClickErr(func() error)` — inline button click handler
+  - `.OnChangeText(func(text string))` — live text input change handler
+  - `.OnSubmitText(func(text string))` — input submit (Enter) handler
+  - `.OnSelectItem(func(index int, value any))` — collection activation handler
+  - `.KeyDo(chord, func())` / `.KeyErr(chord, func() error)` — shortcut closure (bubbles up container hierarchy)
+
+---
+
+## 2. Lua Application Contract
 
 A LugoTUI application in Lua returns a root table with the following structure:
 
@@ -95,7 +148,7 @@ return {
 
 ---
 
-## 2. Flexbox Layout System
+## 3. Flexbox Layout System
 
 LugoTUI implements a subset of Flexbox optimized for terminal cell grids:
 
@@ -115,7 +168,7 @@ LugoTUI implements a subset of Flexbox optimized for terminal cell grids:
 
 ---
 
-## 3. Native Widgets Catalog
+## 4. Native Widgets Catalog
 
 Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event loop or external UI framework is involved.
 
@@ -158,7 +211,7 @@ Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event l
 
 ---
 
-## 4. Interaction, Focus & Navigation Standards
+## 5. Interaction, Focus & Navigation Standards
 
 - **ID stability:** Stateful widgets require stable `id` properties across reloads.
 - **Indexing convention:** Collections use **1-based** `index` in selection callbacks; paginator `page` is **0-based**.
@@ -178,6 +231,9 @@ Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event l
 - **Node-level Keymaps & Interception:**
   - `keymap = { ['Space'] = 'action', ['i'] = 'install' }`: Widget-specific keyboard shortcuts active while the widget has focus.
   - `on_key = 'action'`: Intercepts keystrokes on the focused node, passing `{ id, key, rune, ctrl, alt, shift, focus }` in the event payload.
+- **Hierarchical Key Event Bubbling:**
+  - When a keystroke is not consumed by the focused widget, it bubbles upward through ancestor containers (`Node` -> `Parent` -> `Grandparent` -> `Root/Modal`).
+  - Keymaps attached to parent containers (`Column(...).KeyDo("ctrl+s", fn)` or `ui.column{ keymap = { ... } }`) catch unhandled hotkeys from their children.
 - **Default Keybindings:**
   - `Tab` / `Shift+Tab`: Move focus forward / backward.
   - `Ctrl+P`: Command palette.

@@ -33,7 +33,7 @@ go install github.com/VintlGvard/LugoTUI/cmd/lugotui@latest
 
 ### 1. 100% Pure Go (Reactive `QuickViewFunc` — Zero Lua Required)
 
-Write a reactive view function in pure Go. When state changes via `rt.Set` / `rt.AddInt` or user typing in `lugo.Input("query")`, LugoTUI automatically reconciles the new widget tree while preserving keyboard focus, cursor position, selection, and scroll offsets:
+Write a reactive view function in pure Go. Use zero-boilerplate inline closures (`OnClickDo`, `OnChangeText`, `KeyDo`) or registered actions. When state changes, LugoTUI automatically reconciles the widget tree while preserving keyboard focus, cursor position, selection, and scroll offsets:
 
 ```go
 package main
@@ -45,29 +45,18 @@ import (
 )
 
 func main() {
-	err := lugo.QuickViewFunc(
-		func(rt *lugo.Runtime) *lugo.Node {
-			return lugo.Column(
-				lugo.Panel("Service Monitor",
-					lugo.Textf("Filter: %s |Polls: %d", rt.String("query"), rt.Int("polls")).Bold(true).FG("cyan"),
-					lugo.Input("query").SetID("search").Placeholder("Filter services..."),
-					lugo.Row(
-						lugo.Button("Refresh", "refresh").SetID("btn_refresh"),
-						lugo.Button("Quit", "quit").SetID("btn_quit"),
-					).Gap(1),
-				).Grow(1).Padding(1).Gap(1),
-			).Padding(1)
-		},
-		map[string]lugo.ActionHandler{
-			"refresh": func(rt *lugo.Runtime, _ any) error {
-				return rt.AddInt("polls", 1)
-			},
-			"quit": func(_ *lugo.Runtime, _ any) error {
-				return lugo.ErrQuit
-			},
-		},
-		lugo.WithState("polls", 1),
-	)
+	err := lugo.QuickViewFunc(func(rt *lugo.Runtime) *lugo.Node {
+		return lugo.Column(
+			lugo.Panel("Service Monitor",
+				lugo.Textf("Filter: %s | Polls: %d", rt.String("query"), rt.Int("polls")).Bold(true).FG("cyan"),
+				lugo.Input("query").Placeholder("Filter services..."),
+				lugo.Row(
+					lugo.Button("Refresh").OnClickDo(func() { rt.AddInt("polls", 1) }),
+					lugo.Button("Quit").OnClickErr(rt.Quit),
+				).Gap(1),
+			).Grow(1).Padding(1).Gap(1),
+		).Padding(1).KeyDo("ctrl+q", func() { rt.Quit() })
+	}, nil, lugo.WithState("polls", 1))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -135,11 +124,13 @@ if err := p.Run(); err != nil {
 | Capability | Bubble Tea + Lip Gloss + Bubbles | LugoTUI |
 | --- | --- | --- |
 | **Pure-Go Declarative UI** | Manual string concatenation in `View() string` | Fluent `*lugo.Node` Builder (`Column`, `Row`, `Panel`, `Table`, `Tree`, `Input`) |
+| **Event Closures & Dispatch** | Manual type-switches on `tea.Msg` in `Update()` | Direct **Inline Closures** (`.OnClickDo`, `.OnChangeText`, `.KeyDo`) or registered actions |
+| **Key Event Handling** | Manual message forwarding through nested models | Automatic **Key Event Bubbling** up container hierarchy (`Node` -> `Parent` -> `Root`) |
 | **Layout Engine** | Manual `tea.WindowSizeMsg` width/height arithmetic | Built-in **Flexbox Layout** (`Grow`, `Shrink`, `Padding`, `Gap`, `Align`, `Justify`) |
 | **Focus & Navigation** | Manual focus index tracking & child `Update` routing | Automatic **Tab/Shift+Tab**, **2D Spatial Navigation**, & **Modal Focus Trap** |
 | **Two-Way State Binding** | Manual state copying to/from child models | Automatic `.Bind("key")` + `rt.String("key")` / `rt.Set("key", val)` |
 | **Live Hot-Reload** | None (requires full Go recompile & restart) | **150ms Lua Live Hot-Reload** preserving state & focus |
-| **300-Node Frame Cost** | Full string re-allocation + ANSI parsing | **~460 µs / 12 heap allocs** (`cellBuffer` diff renderer + layout dirty cache) |
+| **300-Node Frame Cost** | Full string re-allocation + ANSI parsing | **~297 µs / 18 heap allocs** (`cellBuffer` diff renderer + layout dirty cache) |
 | **AI Agent / IPC Control** | None built-in | Built-in Unix domain socket JSON Lines IPC (`snapshot`, `apply`, `events`) |
 
 ---
