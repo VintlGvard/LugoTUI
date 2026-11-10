@@ -785,9 +785,18 @@ func (r *Runtime) keyCollection(n *Node, e *tcell.EventKey) (bool, error) {
 			return true, nil
 		}
 		if old != c.Query {
+			oldSelected, oldScroll := s.Selected, s.Scroll
 			s.Selected = 0
 			s.Scroll = 0
-			return true, r.Action(str(n, "on_change", ""), map[string]any{"id": n.ID, "value": c.Query, "query": c.Query})
+			if changeAction := str(n, "on_change", ""); changeAction != "" {
+				err := r.Action(changeAction, map[string]any{"id": n.ID, "value": c.Query, "query": c.Query})
+				if err != nil {
+					c.Query = old
+					s.Selected = oldSelected
+					s.Scroll = oldScroll
+				}
+				return true, err
+			}
 		}
 		return true, nil
 	}
@@ -964,7 +973,11 @@ func (r *Runtime) keyCollection(n *Node, e *tcell.EventKey) (bool, error) {
 		if changeAction := str(n, "on_change", ""); changeAction != "" {
 			if s.Selected >= 0 && s.Selected < len(items) {
 				it := items[s.Selected]
-				return true, r.Action(changeAction, map[string]any{"id": n.ID, "index": it.index, "value": it.value})
+				err := r.Action(changeAction, map[string]any{"id": n.ID, "index": it.index, "value": it.value})
+				if err != nil {
+					s.Selected = oldSelected
+				}
+				return true, err
 			}
 		}
 	}
@@ -1022,6 +1035,7 @@ func (r *Runtime) mouseCollection(n *Node, e *tcell.EventMouse) (bool, error) {
 			if s.Selected >= 0 && s.Selected < len(items) {
 				it := items[s.Selected]
 				if err := r.Action(changeAction, map[string]any{"id": n.ID, "index": it.index, "value": it.value}); err != nil {
+					s.Selected = oldSelected
 					return true, err
 				}
 			}

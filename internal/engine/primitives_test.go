@@ -2,6 +2,7 @@ package engine
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,3 +329,23 @@ func TestPrimitivePaintAndBindings(t *testing.T) {
 		t.Fatal("control key mismatch")
 	}
 }
+
+func TestTimerStopwatchPropagateAndRollbackOnChangeError(t *testing.T) {
+	r, err := Load(`return {
+  view = {type = "stopwatch", id = "sw", running = false, on_change = "boom"},
+  actions = {boom = function() error("clock_boom") end}
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	r.Focus = "sw"
+	err = r.Key(tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone))
+	if err == nil || !strings.Contains(err.Error(), "clock_boom") {
+		t.Fatalf("expected clock_boom error from stopwatch on_change, got %v", err)
+	}
+	if r.primitive(r.Nodes["sw"]).running {
+		t.Fatal("stopwatch running state was not rolled back after failed on_change")
+	}
+}
+

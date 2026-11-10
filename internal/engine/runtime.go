@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"time"
 
 	"github.com/VintlGvard/LugoTUI/internal/assets"
@@ -298,7 +297,7 @@ func (r *Runtime) Commit() error {
 	}
 	candidate.Nodes = ids
 	candidate.State = map[string]*WidgetState{}
-	candidate.Data = maps.Clone(r.Data)
+	candidate.Data = cloneData(r.Data)
 	candidate.restore(r)
 	if e := ValidateModel(candidate.Data); e != nil {
 		return e
@@ -362,7 +361,8 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 	oldFocus := r.Focus
 	oldPrevious := r.PreviousFocus
 	oldData := r.Data
-	r.Data = maps.Clone(oldData)
+	r.Data = cloneData(oldData)
+	oldGlobals := snapshotLuaGlobals(r.L)
 	oldEvents := len(r.Events)
 	r.Staged = nil
 	r.stagedFocus = nil
@@ -370,6 +370,7 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 	defer func() {
 		if !committed {
 			r.Data = oldData
+			restoreLuaGlobals(r.L, oldGlobals)
 			r.PreviousFocus = oldPrevious
 			r.Staged = nil
 			r.stagedFocus = nil
@@ -405,3 +406,63 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 	committed = true
 	return nil
 }
+
+func cloneData(src map[string]any) map[string]any {
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		if cloned, err := cloneValue(v, 0); err == nil {
+			out[k] = cloned
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func snapshotLuaGlobals(L *lua.LState) map[lua.LValue]lua.LValue {
+	if L == nil || L.G == nil || L.G.Global == nil {
+		return nil
+	}
+	snap := map[lua.LValue]lua.LValue{}
+	L.G.Global.ForEach(func(k, v lua.LValue) {
+		snap[k] = cloneLuaValue(L, v, 0)
+	})
+	return snap
+}
+
+func restoreLuaGlobals(L *lua.LState, snap map[lua.LValue]lua.LValue) {
+	if L == nil || L.G == nil || L.G.Global == nil || snap == nil {
+		return
+	}
+	var toDelete []lua.LValue
+	L.G.Global.ForEach(func(k, _ lua.LValue) {
+		if _, ok := snap[k]; !ok {
+			toDelete = append(toDelete, k)
+		}
+	})
+	for _, k := range toDelete {
+		L.G.Global.RawSet(k, lua.LNil)
+	}
+	for k, v := range snap {
+		L.G.Global.RawSet(k, v)
+	}
+}
+
+func cloneLuaValue(L *lua.LState, v lua.LValue, depth int) lua.LValue {
+	if depth > 8 {
+		return v
+	}
+	t, ok := v.(*lua.LTable)
+	if !ok || t == L.G.Global {
+		return v
+	}
+	if s, ok := v.(lua.LString); ok {
+		_ = s
+	}
+	copyTbl := L.NewTable()
+	t.ForEach(func(k, val lua.LValue) {
+		copyTbl.RawSet(k, cloneLuaValue(L, val, depth+1))
+	})
+	return copyTbl
+}
+

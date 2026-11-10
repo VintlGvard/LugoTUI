@@ -24,9 +24,7 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 	}
 	r := &Runtime{Nodes: map[string]*Node{}, State: map[string]*WidgetState{}, Data: map[string]any{}, ChunkName: chunkName}
 	if old != nil {
-		for k, v := range old.Data {
-			r.Data[k] = v
-		}
+		r.Data = cloneData(old.Data)
 		r.Revision = old.Revision + 1
 		r.Theme = old.Theme
 	}
@@ -43,6 +41,35 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 	}
 	for _, name := range []string{"dofile", "loadfile", "load", "loadstring", "collectgarbage", "print"} {
 		L.SetGlobal(name, lua.LNil)
+	}
+	if strTbl, ok := L.GetGlobal("string").(*lua.LTable); ok {
+		L.SetField(strTbl, "rep", L.NewFunction(func(L *lua.LState) int {
+			s := L.CheckString(1)
+			n := L.CheckInt(2)
+			sep := L.OptString(3, "")
+			if n <= 0 {
+				L.Push(lua.LString(""))
+				return 1
+			}
+			total := int64(len(s))*int64(n) + int64(len(sep))*int64(n-1)
+			if int64(len(s)) > maxText || int64(n) > maxText || total > maxText || total < 0 {
+				L.RaiseError("string.rep exceeds 1 MiB")
+			}
+			if sep == "" {
+				L.Push(lua.LString(strings.Repeat(s, n)))
+				return 1
+			}
+			var b strings.Builder
+			b.Grow(int(total))
+			for i := 0; i < n; i++ {
+				if i > 0 {
+					b.WriteString(sep)
+				}
+				b.WriteString(s)
+			}
+			L.Push(lua.LString(b.String()))
+			return 1
+		}))
 	}
 	ui := L.NewTable()
 	for _, kind := range []string{"box", "row", "column", "text", "input", "textarea", "button", "list", "scroll", "overlay", "panel", "table", "viewport", "tree", "filepicker", "spinner", "progress", "paginator", "timer", "stopwatch", "help", "cursor"} {

@@ -655,8 +655,16 @@ func (r *Runtime) changed(n *Node, s *WidgetState) error {
 	if b := str(n, "bind", ""); b != "" {
 		r.Data[b] = s.Value
 	}
-	r.Revision++
-	return r.Action(str(n, "on_change", ""), map[string]any{"id": n.ID, "value": s.Value, "error": editorValidation(n, s.Value)})
+	action := str(n, "on_change", "")
+	if action == "" {
+		r.Revision++
+		return nil
+	}
+	err := r.Action(action, map[string]any{"id": n.ID, "value": s.Value, "error": editorValidation(n, s.Value)})
+	if err != nil {
+		r.Revision++
+	}
+	return err
 }
 
 func editSave(s *WidgetState) {

@@ -80,13 +80,56 @@ func TestLuaRuntimeRejectsExpansion(t *testing.T) {
 	for _, source := range []string{
 		`local n={type="box"}; for i=1,30 do n={type="box",n,n} end; return {view=n}`,
 		`local v={}; for i=1,29 do v={v,v} end; ui.set("v",v); return {view={type="box"}}`,
+		`local s = string.rep("x", 1048577); return {view={type="box"}}`,
+		`local s = ("x"):rep(500000, "--"); return {view={type="box"}}`,
 	} {
 		r, err := loadRuntime(source, "", nil)
 		if r != nil {
 			r.L.Close()
 		}
 		if err == nil {
-			t.Fatal("expanded Lua aliases accepted")
+			t.Fatalf("expanded Lua source accepted: %s", source)
 		}
 	}
 }
+
+func TestActionRollsBackLuaGlobalsAndDeepData(t *testing.T) {
+	r, err := Load(`counter = 0
+return {
+  view = {type = "box", id = "root"},
+  actions = {
+    fail = function()
+      counter = counter + 1
+      error("boom")
+    end,
+    read = function()
+      ui.set("c", counter)
+    end
+  }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	nested := map[string]any{"k": "v1"}
+	r.Data["nested"] = nested
+	if err := r.Action("fail", nil); err == nil {
+		t.Fatal("expected fail action to return error")
+	}
+	if err := r.Action("read", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Data["c"]; got != float64(0) {
+		t.Fatalf("Lua global counter was not rolled back after failed action: got %v, want 0", got)
+	}
+	r2, err := r.Reload(`return {view = {type = "box", id = "root"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r2.Close()
+	r2.Data["nested"].(map[string]any)["k"] = "mutated"
+	if nested["k"] != "v1" {
+		t.Fatalf("Reload shared nested Data map with previous runtime: got %v", nested["k"])
+	}
+}
+

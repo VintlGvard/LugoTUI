@@ -693,6 +693,7 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 		return true, nil
 	case "timer", "stopwatch":
 		p := r.primitive(n)
+		old := *p
 		switch {
 		case e.Key() == tcell.KeyEnter || (e.Key() == tcell.KeyRune && e.Rune() == ' '):
 			if p.timedOut {
@@ -706,7 +707,10 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 			p.initialized = false
 			p.runningProp = p.running
 			if action := str(n, "on_change", ""); action != "" {
-				_ = r.Action(action, map[string]any{"id": n.ID, "running": p.running, "elapsed": float64(p.elapsed / time.Millisecond)})
+				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.running, "elapsed": float64(p.elapsed / time.Millisecond)}); err != nil {
+					*p = old
+					return true, err
+				}
 			}
 			return true, nil
 		case e.Key() == tcell.KeyRune && (e.Rune() == 'r' || e.Rune() == 'R'):
@@ -717,7 +721,10 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 			p.running = primitiveBool(n, "running", true)
 			p.runningProp = p.running
 			if action := str(n, "on_change", ""); action != "" {
-				_ = r.Action(action, map[string]any{"id": n.ID, "running": p.running, "elapsed": float64(p.elapsed / time.Millisecond)})
+				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.running, "elapsed": float64(p.elapsed / time.Millisecond)}); err != nil {
+					*p = old
+					return true, err
+				}
 			}
 			return true, nil
 		default:
