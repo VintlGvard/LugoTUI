@@ -122,25 +122,25 @@ func (n *Node) When(cond bool, fn func(*Node)) *Node {
 	return n
 }
 
-func (n *Node) Bind(key string) *Node              { return n.Prop("bind", key) }
-func (n *Node) Source(key string) *Node            { return n.Prop("source", key) }
-func (n *Node) Text(text string) *Node             { return n.Prop("text", text) }
+func (n *Node) Bind(key string) *Node               { return n.Prop("bind", key) }
+func (n *Node) Source(key string) *Node             { return n.Prop("source", key) }
+func (n *Node) Text(text string) *Node              { return n.Prop("text", text) }
 func (n *Node) Textf(format string, a ...any) *Node { return n.Prop("text", fmt.Sprintf(format, a...)) }
-func (n *Node) Title(title string) *Node           { return n.Prop("title", title) }
-func (n *Node) Placeholder(p string) *Node         { return n.Prop("placeholder", p) }
-func (n *Node) Width(w int) *Node                  { return n.Prop("width", w) }
-func (n *Node) Height(h int) *Node                 { return n.Prop("height", h) }
-func (n *Node) Size(w, h int) *Node                { return n.Prop("width", w).Prop("height", h) }
-func (n *Node) MinWidth(w int) *Node               { return n.Prop("min_width", w) }
-func (n *Node) MinHeight(h int) *Node              { return n.Prop("min_height", h) }
-func (n *Node) MaxWidth(w int) *Node               { return n.Prop("max_width", w) }
-func (n *Node) MaxHeight(h int) *Node              { return n.Prop("max_height", h) }
-func (n *Node) Grow(g float64) *Node               { return n.Prop("grow", g) }
-func (n *Node) Shrink(s float64) *Node             { return n.Prop("shrink", s) }
-func (n *Node) Flex(g float64) *Node               { return n.Prop("grow", g) }
-func (n *Node) Padding(p int) *Node                { return n.Prop("padding", p) }
-func (n *Node) Margin(m int) *Node                 { return n.Prop("margin", m) }
-func (n *Node) Gap(g int) *Node                    { return n.Prop("gap", g) }
+func (n *Node) Title(title string) *Node            { return n.Prop("title", title) }
+func (n *Node) Placeholder(p string) *Node          { return n.Prop("placeholder", p) }
+func (n *Node) Width(w int) *Node                   { return n.Prop("width", w) }
+func (n *Node) Height(h int) *Node                  { return n.Prop("height", h) }
+func (n *Node) Size(w, h int) *Node                 { return n.Prop("width", w).Prop("height", h) }
+func (n *Node) MinWidth(w int) *Node                { return n.Prop("min_width", w) }
+func (n *Node) MinHeight(h int) *Node               { return n.Prop("min_height", h) }
+func (n *Node) MaxWidth(w int) *Node                { return n.Prop("max_width", w) }
+func (n *Node) MaxHeight(h int) *Node               { return n.Prop("max_height", h) }
+func (n *Node) Grow(g float64) *Node                { return n.Prop("grow", g) }
+func (n *Node) Shrink(s float64) *Node              { return n.Prop("shrink", s) }
+func (n *Node) Flex(g float64) *Node                { return n.Prop("grow", g) }
+func (n *Node) Padding(p int) *Node                 { return n.Prop("padding", p) }
+func (n *Node) Margin(m int) *Node                  { return n.Prop("margin", m) }
+func (n *Node) Gap(g int) *Node                     { return n.Prop("gap", g) }
 func (n *Node) Border(v ...any) *Node {
 	if len(v) == 0 {
 		return n.Prop("border", true)
@@ -154,9 +154,9 @@ func (n *Node) Border(v ...any) *Node {
 		return n.Prop("border", true)
 	}
 }
-func (n *Node) BorderStyle(style string) *Node                  { return n.Prop("border_style", style) }
-func (n *Node) BorderFG(color string) *Node                     { return n.Prop("border_fg", color) }
-func (n *Node) BorderBG(color string) *Node                     { return n.Prop("border_bg", color) }
+func (n *Node) BorderStyle(style string) *Node { return n.Prop("border_style", style) }
+func (n *Node) BorderFG(color string) *Node    { return n.Prop("border_fg", color) }
+func (n *Node) BorderBG(color string) *Node    { return n.Prop("border_bg", color) }
 func (n *Node) BorderColor(fg string, bg ...string) *Node {
 	n.Prop("border_fg", fg)
 	if len(bg) > 0 && bg[0] != "" {
@@ -164,20 +164,22 @@ func (n *Node) BorderColor(fg string, bg ...string) *Node {
 	}
 	return n
 }
-func (n *Node) BorderGlyphs(bg BorderGlyphs) *Node              { return n.Prop("border", true).Prop("border_glyphs", bg) }
-func (n *Node) TitleFG(color string) *Node                      { return n.Prop("title_fg", color) }
+func (n *Node) BorderGlyphs(bg BorderGlyphs) *Node {
+	return n.Prop("border", true).Prop("border_glyphs", bg)
+}
+func (n *Node) TitleFG(color string) *Node { return n.Prop("title_fg", color) }
 
-func (n *Node) ButtonStyle(style string) *Node                  { return n.Prop("button_style", style) }
-func (n *Node) Plain() *Node                                    { return n.ButtonStyle("plain") }
-func (n *Node) Filled() *Node                                   { return n.ButtonStyle("filled") }
-func (n *Node) Chevrons() *Node                                 { return n.ButtonStyle("chevrons") }
-func (n *Node) Parens() *Node                                   { return n.ButtonStyle("parens") }
-func (n *Node) Prefix(p string) *Node                           { return n.Prop("prefix", p) }
-func (n *Node) Suffix(s string) *Node                           { return n.Prop("suffix", s) }
+func (n *Node) ButtonStyle(style string) *Node { return n.Prop("button_style", style) }
+func (n *Node) Plain() *Node                   { return n.ButtonStyle("plain") }
+func (n *Node) Filled() *Node                  { return n.ButtonStyle("filled") }
+func (n *Node) Chevrons() *Node                { return n.ButtonStyle("chevrons") }
+func (n *Node) Parens() *Node                  { return n.ButtonStyle("parens") }
+func (n *Node) Prefix(p string) *Node          { return n.Prop("prefix", p) }
+func (n *Node) Suffix(s string) *Node          { return n.Prop("suffix", s) }
 
-func (n *Node) CursorPrefix(cp string) *Node                    { return n.Prop("cursor_prefix", cp) }
-func (n *Node) SelectedFG(color string) *Node                   { return n.Prop("selected_fg", color) }
-func (n *Node) SelectedBG(color string) *Node                   { return n.Prop("selected_bg", color) }
+func (n *Node) CursorPrefix(cp string) *Node  { return n.Prop("cursor_prefix", cp) }
+func (n *Node) SelectedFG(color string) *Node { return n.Prop("selected_fg", color) }
+func (n *Node) SelectedBG(color string) *Node { return n.Prop("selected_bg", color) }
 func (n *Node) SelectedBold(v ...bool) *Node {
 	b := true
 	if len(v) > 0 {
@@ -203,22 +205,22 @@ func (n *Node) OnRawKey(keyFn func(e *tcell.EventKey) bool) *Node {
 	n.RawKey = keyFn
 	return n
 }
-func (n *Node) FG(color string) *Node              { return n.Prop("fg", color) }
-func (n *Node) BG(color string) *Node              { return n.Prop("bg", color) }
-func (n *Node) Color(fg, bg string) *Node          { return n.Prop("fg", fg).Prop("bg", bg) }
-func (n *Node) Bold(v bool) *Node                  { return n.Prop("bold", v) }
-func (n *Node) Align(align string) *Node           { return n.Prop("align", align) }
-func (n *Node) Justify(justify string) *Node       { return n.Prop("justify", justify) }
-func (n *Node) Hidden(v bool) *Node                { return n.Prop("hidden", v) }
-func (n *Node) Disabled(v bool) *Node              { return n.Prop("disabled", v) }
-func (n *Node) Modal(v bool) *Node                 { return n.Prop("modal", v) }
-func (n *Node) Backdrop(mode string) *Node         { return n.Prop("backdrop", mode) }
-func (n *Node) CloseOnEsc(v bool) *Node            { return n.Prop("close_on_esc", v) }
-func (n *Node) ZIndex(z int) *Node                 { return n.Prop("z_index", z) }
-func (n *Node) Top(v int) *Node                    { return n.Prop("top", v) }
-func (n *Node) Right(v int) *Node                  { return n.Prop("right", v) }
-func (n *Node) Bottom(v int) *Node                 { return n.Prop("bottom", v) }
-func (n *Node) Left(v int) *Node                   { return n.Prop("left", v) }
+func (n *Node) FG(color string) *Node        { return n.Prop("fg", color) }
+func (n *Node) BG(color string) *Node        { return n.Prop("bg", color) }
+func (n *Node) Color(fg, bg string) *Node    { return n.Prop("fg", fg).Prop("bg", bg) }
+func (n *Node) Bold(v bool) *Node            { return n.Prop("bold", v) }
+func (n *Node) Align(align string) *Node     { return n.Prop("align", align) }
+func (n *Node) Justify(justify string) *Node { return n.Prop("justify", justify) }
+func (n *Node) Hidden(v bool) *Node          { return n.Prop("hidden", v) }
+func (n *Node) Disabled(v bool) *Node        { return n.Prop("disabled", v) }
+func (n *Node) Modal(v bool) *Node           { return n.Prop("modal", v) }
+func (n *Node) Backdrop(mode string) *Node   { return n.Prop("backdrop", mode) }
+func (n *Node) CloseOnEsc(v bool) *Node      { return n.Prop("close_on_esc", v) }
+func (n *Node) ZIndex(z int) *Node           { return n.Prop("z_index", z) }
+func (n *Node) Top(v int) *Node              { return n.Prop("top", v) }
+func (n *Node) Right(v int) *Node            { return n.Prop("right", v) }
+func (n *Node) Bottom(v int) *Node           { return n.Prop("bottom", v) }
+func (n *Node) Left(v int) *Node             { return n.Prop("left", v) }
 
 func (n *Node) Wrap(enabled bool) *Node {
 	if enabled {
@@ -250,19 +252,19 @@ func (n *Node) Masked(v bool) *Node {
 	return n.Prop("echo", "normal")
 }
 
-func (n *Node) CharLimit(limit int) *Node           { return n.Prop("char_limit", limit) }
-func (n *Node) MaxLength(limit int) *Node           { return n.Prop("char_limit", limit) }
+func (n *Node) CharLimit(limit int) *Node            { return n.Prop("char_limit", limit) }
+func (n *Node) MaxLength(limit int) *Node            { return n.Prop("char_limit", limit) }
 func (n *Node) ValidationPattern(regex string) *Node { return n.Prop("validation_pattern", regex) }
-func (n *Node) Filterable(v bool) *Node             { return n.Prop("filterable", v) }
-func (n *Node) MultiSelect(v bool) *Node            { return n.Prop("multi_select", v) }
-func (n *Node) ItemHeight(h int) *Node              { return n.Prop("item_height", h) }
-func (n *Node) ShowIcons(v bool) *Node              { return n.Prop("show_icons", v) }
-func (n *Node) ShowHidden(v bool) *Node             { return n.Prop("show_hidden", v) }
-func (n *Node) CurrentDir(dir string) *Node         { return n.Prop("current_dir", dir) }
-func (n *Node) NavUp(id string) *Node               { return n.Prop("nav_up", id) }
-func (n *Node) NavDown(id string) *Node             { return n.Prop("nav_down", id) }
-func (n *Node) NavLeft(id string) *Node             { return n.Prop("nav_left", id) }
-func (n *Node) NavRight(id string) *Node            { return n.Prop("nav_right", id) }
+func (n *Node) Filterable(v bool) *Node              { return n.Prop("filterable", v) }
+func (n *Node) MultiSelect(v bool) *Node             { return n.Prop("multi_select", v) }
+func (n *Node) ItemHeight(h int) *Node               { return n.Prop("item_height", h) }
+func (n *Node) ShowIcons(v bool) *Node               { return n.Prop("show_icons", v) }
+func (n *Node) ShowHidden(v bool) *Node              { return n.Prop("show_hidden", v) }
+func (n *Node) CurrentDir(dir string) *Node          { return n.Prop("current_dir", dir) }
+func (n *Node) NavUp(id string) *Node                { return n.Prop("nav_up", id) }
+func (n *Node) NavDown(id string) *Node              { return n.Prop("nav_down", id) }
+func (n *Node) NavLeft(id string) *Node              { return n.Prop("nav_left", id) }
+func (n *Node) NavRight(id string) *Node             { return n.Prop("nav_right", id) }
 
 func (n *Node) Nav(up, down, left, right string) *Node {
 	if up != "" {
@@ -505,17 +507,17 @@ func (n *Node) Items(items ...string) *Node {
 	return n.Prop("items", arr)
 }
 
-func (n *Node) Selected(idx int) *Node          { return n.Prop("selected", idx) }
-func (n *Node) Running(v bool) *Node            { return n.Prop("running", v) }
-func (n *Node) Percent(p float64) *Node         { return n.Prop("percent", p) }
-func (n *Node) ShowPercentage(v bool) *Node     { return n.Prop("show_percentage", v) }
-func (n *Node) ShowHeader(v bool) *Node         { return n.Prop("show_header", v) }
-func (n *Node) ShowLineNumbers(v bool) *Node    { return n.Prop("show_line_numbers", v) }
-func (n *Node) SoftWrap(v bool) *Node           { return n.Prop("soft_wrap", v) }
-func (n *Node) Mode(mode string) *Node          { return n.Prop("mode", mode) }
-func (n *Node) Preset(preset string) *Node      { return n.Prop("preset", preset) }
-func (n *Node) Duration(ms int) *Node           { return n.Prop("duration", ms) }
-func (n *Node) Interval(ms int) *Node           { return n.Prop("interval", ms) }
+func (n *Node) Selected(idx int) *Node       { return n.Prop("selected", idx) }
+func (n *Node) Running(v bool) *Node         { return n.Prop("running", v) }
+func (n *Node) Percent(p float64) *Node      { return n.Prop("percent", p) }
+func (n *Node) ShowPercentage(v bool) *Node  { return n.Prop("show_percentage", v) }
+func (n *Node) ShowHeader(v bool) *Node      { return n.Prop("show_header", v) }
+func (n *Node) ShowLineNumbers(v bool) *Node { return n.Prop("show_line_numbers", v) }
+func (n *Node) SoftWrap(v bool) *Node        { return n.Prop("soft_wrap", v) }
+func (n *Node) Mode(mode string) *Node       { return n.Prop("mode", mode) }
+func (n *Node) Preset(preset string) *Node   { return n.Prop("preset", preset) }
+func (n *Node) Duration(ms int) *Node        { return n.Prop("duration", ms) }
+func (n *Node) Interval(ms int) *Node        { return n.Prop("interval", ms) }
 func (n *Node) Page(page, perPage, total int) *Node {
 	if perPage < 1 {
 		perPage = 1
