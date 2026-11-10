@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-11-10
+
+### Changed
+- Reduced per-frame heap allocations by 37% (`42,319` to `26,563` allocs/op) and frame render latency from `2.34 ms` to `1.39 ms` by eliminating `uniseg` `g.Runes()` slice allocations, `strings.Repeat` border strings, and redundant container cell fills.
+- Cached compiled `validation_pattern` regular expressions (`sync.Map`) and `tcell` normalized key names (`sync.OnceValue`).
+- Switched `StartTaskDebounced` to timer-first scheduling (`time.AfterFunc`) before spawning worker goroutines.
+
+### Fixed
+- Full transactional rollback of user-defined Lua `_G` globals, deep-cloned `Runtime.Data`, and widget state (`input`, `textarea`, `list`, `table`, `tree`, `timer`, `stopwatch`) when `Action` or `Commit` fails.
+- Persistent AI agent IPC socket connections no longer disconnect after 2 seconds of idle time between JSON Lines frames (`frameReader`).
+- `Runtime.Patch` and `Runtime.Replace` now accept standard Go `int` and `int64` numeric properties alongside `float64`.
+- Headless `FocusNext`/`FocusPrev` before initial `Draw` and staged `ui.focus_next`/`ui.focus_prev`/`ui.focus_direction` inside Lua actions.
+- Cleared stale `diagnostic` error banners on subsequent successful user input and preserved hardware cursor visibility when not overlapped by the bottom diagnostic row.
+- Fixed word-wrap edge cases with leading/trailing spaces in `LimitedLines`, `spans` newline offset tracking in `paintText`, and control/tab sanitization on `Paste`.
+- Validated static ELF linkage before entering `bubblewrap` in `--sandbox` mode and updated GitHub Actions workflow versions (`actions/checkout@v4`, `actions/setup-go@v5`, `govulncheck@latest`).
+
+### Security
+- Guarded Lua `string.rep` against OOM allocation bypass by enforcing the 1 MiB string limit (`maxText`) prior to allocation.
+
 ## [0.1.5] - 2026-11-09
 
 ### Fixed
