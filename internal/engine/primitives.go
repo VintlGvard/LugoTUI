@@ -67,7 +67,7 @@ var primitiveSpinnerFPS = map[string]int{
 }
 
 func primitiveInterval(n *Node) time.Duration {
-	if v, ok := n.Props["interval"].(float64); ok && v > 0 {
+	if v, ok := floatVal(n.Props["interval"]); ok && v > 0 {
 		return time.Duration(v) * time.Millisecond
 	}
 	preset := str(n, "preset", "line")
@@ -149,7 +149,7 @@ func validatePrimitive(n *Node) error {
 	}
 	for k, bounds := range numeric {
 		if v, exists := n.Props[k]; exists {
-			f, ok := v.(float64)
+			f, ok := floatVal(v)
 			if !ok || !finite(f) || f < bounds[0] || f > bounds[1] {
 				return fail(k, "number outside supported range")
 			}

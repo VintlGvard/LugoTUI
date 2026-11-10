@@ -74,8 +74,21 @@ func str(n *Node, key, fallback string) string {
 	return fallback
 }
 
+func floatVal(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	default:
+		return 0, false
+	}
+}
+
 func num(n *Node, key string, fallback float64) float64 {
-	if v, ok := n.Props[key].(float64); ok {
+	if v, ok := floatVal(n.Props[key]); ok {
 		return v
 	}
 	return fallback
@@ -223,11 +236,11 @@ func validateTree(root *Node) (map[string]*Node, error) {
 							return fmt.Errorf("invalid percentage %s", s)
 						}
 					}
-				} else if f, ok := v.(float64); !ok || !finite(f) || f < 0 || f > 1e6 {
+				} else if f, ok := floatVal(v); !ok || !finite(f) || f < 0 || f > 1e6 {
 					return fmt.Errorf("invalid %s", k)
 				}
 			case "grow", "shrink", "padding", "margin", "gap":
-				if f, ok := v.(float64); !ok || !finite(f) || f < 0 || f > 1e6 {
+				if f, ok := floatVal(v); !ok || !finite(f) || f < 0 || f > 1e6 {
 					return fmt.Errorf("invalid %s", k)
 				}
 			case "direction":
@@ -278,7 +291,7 @@ func validateTree(root *Node) (map[string]*Node, error) {
 					}
 				}
 			case "z_index":
-				if f, ok := v.(float64); !ok || !finite(f) || math.Abs(f) > 1e6 {
+				if f, ok := floatVal(v); !ok || !finite(f) || math.Abs(f) > 1e6 {
 					return errors.New("invalid z_index")
 				}
 			case "spans":

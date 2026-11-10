@@ -68,6 +68,24 @@ type AgentRequest struct {
 	Reply chan []byte
 }
 
+type frameReader struct {
+	conn    net.Conn
+	inFrame bool
+}
+
+func (f *frameReader) Read(p []byte) (int, error) {
+	if !f.inFrame {
+		_ = f.conn.SetReadDeadline(time.Time{})
+	} else {
+		_ = f.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	}
+	n, err := f.conn.Read(p)
+	if n > 0 {
+		f.inFrame = bytes.IndexByte(p[:n], '\n') < 0
+	}
+	return n, err
+}
+
 func ServeAgent(path string, requests chan<- AgentRequest, done <-chan struct{}) (func(), error) {
 	if _, e := os.Lstat(path); e == nil {
 		return nil, errors.New("socket path already exists; choose unused path")
@@ -149,10 +167,9 @@ func ServeAgent(path string, requests chan<- AgentRequest, done <-chan struct{})
 				}()
 				defer func() { <-slots }()
 				defer conn.Close()
-				scanner := bufio.NewScanner(conn)
+				scanner := bufio.NewScanner(&frameReader{conn: conn})
 				scanner.Buffer(make([]byte, 4096), maxText+3)
 				for {
-					conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 					if !scanner.Scan() || len(scanner.Bytes()) > maxText {
 						return
 					}

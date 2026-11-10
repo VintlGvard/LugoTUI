@@ -40,7 +40,7 @@ func validateEditor(n *Node) error {
 		}
 	}
 	if v, ok := n.Props["cursor_blink_speed"]; ok {
-		x, ok := v.(float64)
+		x, ok := floatVal(v)
 		if !ok || math.IsNaN(x) || math.IsInf(x, 0) || x < 1 || x > maxText {
 			return fmt.Errorf("cursor_blink_speed must be a positive number")
 		}
@@ -64,7 +64,7 @@ func validateEditor(n *Node) error {
 		}
 	}
 	if v, ok := n.Props["char_limit"]; ok {
-		x, ok := v.(float64)
+		x, ok := floatVal(v)
 		if !ok || math.IsNaN(x) || math.IsInf(x, 0) || x < 0 || x > maxText || x != math.Trunc(x) {
 			return fmt.Errorf("char_limit must be an integer between 0 and %d", maxText)
 		}

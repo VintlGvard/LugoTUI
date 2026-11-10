@@ -148,3 +148,37 @@ func TestAgentReplyDoesNotMutateBuffer(t *testing.T) {
 		t.Fatalf("reply buffer mutated: %q", buffer)
 	}
 }
+
+func TestServeAgentKeepsIdlePersistentConnectionAlive(t *testing.T) {
+	requests := make(chan AgentRequest, 2)
+	path := shortSocketPath(t)
+	stop, err := ServeAgent(path, requests, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	go func() {
+		for req := range requests {
+			req.Reply <- []byte(`{"ok":true}`)
+		}
+	}()
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	if _, err := conn.Write([]byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	if _, err := conn.Write([]byte("{}\n")); err != nil {
+		t.Fatalf("write after 2.1s idle failed: %v", err)
+	}
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatalf("persistent agent connection dropped after 2.1s idle: %v", err)
+	}
+}

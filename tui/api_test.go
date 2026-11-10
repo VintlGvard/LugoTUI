@@ -183,3 +183,17 @@ func TestTransactionalFocus(t *testing.T) {
 		t.Fatal("initialization mutation accepted")
 	}
 }
+
+func TestPatchAndReplaceAcceptGoInts(t *testing.T) {
+	r, err := tui.Load(`return {view=ui.box{id='root',ui.box{id='child'}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Patch("root", map[string]any{"width": 20, "height": int64(10), "padding": 1, "gap": 2}); err != nil {
+		t.Fatalf("Patch rejected Go int/int64 numeric props: %v", err)
+	}
+	if err := r.Replace("child", &tui.Node{Type: "box", ID: "child", Props: map[string]any{"width": 5, "grow": 1}}); err != nil {
+		t.Fatalf("Replace rejected Go int numeric props: %v", err)
+	}
+}

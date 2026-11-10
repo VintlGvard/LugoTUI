@@ -230,6 +230,6 @@ func copyValue(value any) any {
 	case nil, string, bool, int, int64, float64:
 		return value
 	default:
-		panic("tui: unexpected internal data type")
+		return nil
 	}
 }
