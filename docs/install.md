@@ -74,7 +74,7 @@ PowerShell accepts `lugotui --app C:\path\to\app.lua`. A relative `--app` path i
 
 ## Install from Go source instead
 
-Requires Go 1.26.0+:
+Requires Go 1.24.0+:
 
 ```sh
 go install github.com/VintlGvard/LugoTUI/cmd/lugotui@latest
