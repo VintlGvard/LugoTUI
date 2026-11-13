@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-13
+
+### Changed
+- **Minimum Go Version**: Lowered module requirement in `go.mod` from Go `1.26.0` to `1.24.0` (aligning `golang.org/x/sys`, `golang.org/x/term`, and `golang.org/x/text` with `tcell/v2@v2.13.10`) and updated `docs/install.md`.
+- **Documentation & CI Clarity**: Streamlined `README.md` with restored demo GIF and aligned `make cover` / CI descriptions with the race-enabled coverage report.
+
+### Fixed
+- **Option Map Isolation & Chaining**: Captured an isolated handler snapshot in `WithHandlers` so caller map mutations do not affect `OnEvent` dispatch, and chained `WithOnEvent` with prior event handlers regardless of option order.
+
+### Added
+- **Root Facade Test Coverage**: Added unit tests for `lugotui.Map`, `lugotui.NewOSC52Clipboard`, and `lugotui.NewScreenRenderer` in `lugotui_test.go`.
+
 ## [0.2.0] - 2026-11-11
 
 ### Added
