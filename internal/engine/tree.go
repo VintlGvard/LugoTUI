@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/VintlGvard/LugoTUI/internal/text"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -32,7 +33,7 @@ type Node struct {
 	linesCacheLimit     int
 	linesCacheWrap      bool
 	linesCacheValid     bool
-	linesCache          []lineSpan
+	linesCache          []text.WrappedLine
 	inlineActions       map[string]GoActionFunc
 	CustomPaint         func(c Canvas)
 	RawKey              func(e *tcell.EventKey) bool
