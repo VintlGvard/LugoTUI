@@ -6,40 +6,21 @@ import (
 	"io"
 	"sync"
 
+	"github.com/VintlGvard/LugoTUI/internal/core"
 	"github.com/gdamore/tcell/v2"
 )
 
-type BorderGlyphs struct {
-	Top         rune
-	Bottom      rune
-	Left        rune
-	Right       rune
-	TopLeft     rune
-	TopRight    rune
-	BottomLeft  rune
-	BottomRight rune
-}
+type BorderGlyphs = core.BorderGlyphs
 
 var (
-	BorderSingle  = BorderGlyphs{Top: '─', Bottom: '─', Left: '│', Right: '│', TopLeft: '┌', TopRight: '┐', BottomLeft: '└', BottomRight: '┘'}
-	BorderRounded = BorderGlyphs{Top: '─', Bottom: '─', Left: '│', Right: '│', TopLeft: '╭', TopRight: '╮', BottomLeft: '╰', BottomRight: '╯'}
-	BorderDouble  = BorderGlyphs{Top: '═', Bottom: '═', Left: '║', Right: '║', TopLeft: '╔', TopRight: '╗', BottomLeft: '╚', BottomRight: '╝'}
-	BorderThick   = BorderGlyphs{Top: '━', Bottom: '━', Left: '┃', Right: '┃', TopLeft: '┏', TopRight: '┓', BottomLeft: '┗', BottomRight: '┛'}
-	BorderASCII   = BorderGlyphs{Top: '-', Bottom: '-', Left: '|', Right: '|', TopLeft: '+', TopRight: '+', BottomLeft: '+', BottomRight: '+'}
+	BorderSingle  = core.SingleBorder
+	BorderRounded = core.RoundedBorder
+	BorderDouble  = core.DoubleBorder
+	BorderThick   = core.ThickBorder
+	BorderASCII   = core.ASCIIBorder
 )
 
-type Canvas interface {
-	Width() int
-	Height() int
-	Bounds() Rect
-	SetCell(x, y int, r rune, st ...tcell.Style)
-	Print(x, y int, text string, st ...tcell.Style)
-	Printf(x, y int, st tcell.Style, format string, args ...any)
-	Fill(r Rect, ch rune, st ...tcell.Style)
-	LineH(x, y, w int, ch rune, st ...tcell.Style)
-	LineV(x, y, h int, ch rune, st ...tcell.Style)
-	IsFocused() bool
-}
+type Canvas = core.Canvas
 
 type Renderer interface {
 	Draw(screen tcell.Screen, rt *Runtime, diagnostic string)

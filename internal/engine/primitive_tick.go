@@ -28,21 +28,21 @@ func (r *Runtime) Tick(now time.Time) error {
 			continue
 		}
 		p := r.primitive(n)
-		frame, percent, blink := p.frame, p.percent, p.cursorBlinked
+		frame, percent, blink := p.Frame, p.Percent, p.CursorBlinked
 		clock := ""
 		if n.Type == "timer" {
-			clock = primitiveClock(n, time.Duration(p.duration*float64(time.Millisecond))-p.elapsed, true)
+			clock = primitiveClock(n, time.Duration(p.Duration*float64(time.Millisecond))-p.Elapsed, true)
 		} else if n.Type == "stopwatch" {
-			clock = primitiveClock(n, p.elapsed, false)
+			clock = primitiveClock(n, p.Elapsed, false)
 		}
 		delta := time.Duration(0)
-		if p.initialized && !now.Before(p.last) {
-			delta = now.Sub(p.last)
+		if p.Initialized && !now.Before(p.Last) {
+			delta = now.Sub(p.Last)
 		}
-		if !p.initialized || !now.Before(p.last) {
-			p.last = now
+		if !p.Initialized || !now.Before(p.Last) {
+			p.Last = now
 		}
-		p.initialized = true
+		p.Initialized = true
 		switch n.Type {
 		case "cursor":
 			mode := str(n, "mode", "blink")
@@ -51,15 +51,15 @@ func (r *Runtime) Tick(now time.Time) error {
 				if speed <= 0 {
 					speed = 530 * time.Millisecond
 				}
-				p.cursorElapsed += delta
-				if p.cursorElapsed >= speed {
-					if (p.cursorElapsed/speed)%2 != 0 {
-						p.cursorBlinked = !p.cursorBlinked
+				p.CursorElapsed += delta
+				if p.CursorElapsed >= speed {
+					if (p.CursorElapsed/speed)%2 != 0 {
+						p.CursorBlinked = !p.CursorBlinked
 					}
-					p.cursorElapsed %= speed
+					p.CursorElapsed %= speed
 				}
 			} else {
-				p.cursorBlinked = (mode == "hidden" || mode == "hide")
+				p.CursorBlinked = (mode == "hidden" || mode == "hide")
 			}
 		case "input", "textarea":
 			if r.Focus == n.ID {
@@ -69,61 +69,61 @@ func (r *Runtime) Tick(now time.Time) error {
 					if speed <= 0 {
 						speed = 530 * time.Millisecond
 					}
-					p.cursorElapsed += delta
-					if p.cursorElapsed >= speed {
-						if (p.cursorElapsed/speed)%2 != 0 {
-							p.cursorBlinked = !p.cursorBlinked
+					p.CursorElapsed += delta
+					if p.CursorElapsed >= speed {
+						if (p.CursorElapsed/speed)%2 != 0 {
+							p.CursorBlinked = !p.CursorBlinked
 						}
-						p.cursorElapsed %= speed
+						p.CursorElapsed %= speed
 					}
 				} else {
-					p.cursorBlinked = (mode == "hidden" || mode == "hide")
+					p.CursorBlinked = (mode == "hidden" || mode == "hide")
 				}
 			}
 		case "spinner":
-			if p.running {
+			if p.Running {
 				interval := primitiveInterval(n)
 				if interval <= 0 {
 					interval = time.Millisecond
 				}
-				p.frameElapsed += delta
-				steps := p.frameElapsed / interval
-				p.frameElapsed %= interval
-				p.frame = (p.frame + int(steps%time.Duration(len(primitiveFrames(n))))) % len(primitiveFrames(n))
+				p.FrameElapsed += delta
+				steps := p.FrameElapsed / interval
+				p.FrameElapsed %= interval
+				p.Frame = (p.Frame + int(steps%time.Duration(len(primitiveFrames(n))))) % len(primitiveFrames(n))
 			}
 		case "progress":
-			p.progressElapsed += delta
+			p.ProgressElapsed += delta
 			duration := time.Duration(num(n, "duration", 250)) * time.Millisecond
 			if duration <= 0 || !primitiveBool(n, "animated", true) {
-				p.percent = p.target
+				p.Percent = p.Target
 			} else {
-				fraction := min(1, float64(p.progressElapsed)/float64(duration))
-				p.percent = p.from + (p.target-p.from)*fraction
+				fraction := min(1, float64(p.ProgressElapsed)/float64(duration))
+				p.Percent = p.From + (p.Target-p.From)*fraction
 			}
 		case "timer", "stopwatch":
-			if !p.running || p.timedOut {
+			if !p.Running || p.TimedOut {
 				continue
 			}
-			p.elapsed += delta
-			if n.Type == "timer" && p.elapsed >= time.Duration(p.duration*float64(time.Millisecond)) {
-				p.elapsed = time.Duration(p.duration * float64(time.Millisecond))
-				p.timedOut = true
+			p.Elapsed += delta
+			if n.Type == "timer" && p.Elapsed >= time.Duration(p.Duration*float64(time.Millisecond)) {
+				p.Elapsed = time.Duration(p.Duration * float64(time.Millisecond))
+				p.TimedOut = true
 				if action := str(n, "on_timeout", ""); action != "" {
-					if err := r.Action(action, map[string]any{"id": n.ID, "elapsed": float64(p.elapsed / time.Millisecond)}); err != nil {
+					if err := r.Action(action, map[string]any{"id": n.ID, "elapsed": float64(p.Elapsed / time.Millisecond)}); err != nil {
 						return err
 					}
 				}
 			}
 		}
 		if n.Type == "timer" {
-			if clock != primitiveClock(n, time.Duration(p.duration*float64(time.Millisecond))-p.elapsed, true) {
+			if clock != primitiveClock(n, time.Duration(p.Duration*float64(time.Millisecond))-p.Elapsed, true) {
 				r.AnimationRevision++
 			}
 		} else if n.Type == "stopwatch" {
-			if clock != primitiveClock(n, p.elapsed, false) {
+			if clock != primitiveClock(n, p.Elapsed, false) {
 				r.AnimationRevision++
 			}
-		} else if frame != p.frame || percent != p.percent || blink != p.cursorBlinked {
+		} else if frame != p.Frame || percent != p.Percent || blink != p.CursorBlinked {
 			r.AnimationRevision++
 		}
 	}
@@ -146,12 +146,12 @@ func (r *Runtime) NeedsTick() bool {
 			}
 		case "spinner", "timer", "stopwatch":
 			p := r.primitive(n)
-			if p.running && !p.timedOut {
+			if p.Running && !p.TimedOut {
 				return true
 			}
 		case "progress":
 			p := r.primitive(n)
-			if p.percent != p.target {
+			if p.Percent != p.Target {
 				return true
 			}
 		}
@@ -200,7 +200,7 @@ func (r *Runtime) paintPrimitive(screen tcell.Screen, n *Node, st tcell.Style, c
 	switch n.Type {
 	case "cursor":
 		mode := str(n, "mode", "blink")
-		if mode == "hidden" || mode == "hide" || (mode == "blink" && p.cursorBlinked) {
+		if mode == "hidden" || mode == "hide" || (mode == "blink" && p.CursorBlinked) {
 			put(screen, cr.X, cr.Y, " ", st, clip)
 		} else {
 			ch := str(n, "char", "█")
@@ -208,15 +208,15 @@ func (r *Runtime) paintPrimitive(screen tcell.Screen, n *Node, st tcell.Style, c
 		}
 	case "spinner":
 		a := primitiveFrames(n)
-		put(screen, cr.X, cr.Y, a[p.frame%len(a)], st, clip)
+		put(screen, cr.X, cr.Y, a[p.Frame%len(a)], st, clip)
 	case "progress":
 		label := ""
 		if primitiveBool(n, "show_percentage", true) {
 			fmtStr := str(n, "percent_format", " %3.0f%%")
-			label = fmt.Sprintf(fmtStr, p.percent*100)
+			label = fmt.Sprintf(fmtStr, p.Percent*100)
 		}
 		width := max(0, cr.W-uniseg.StringWidth(label))
-		filled := int(math.Round(float64(width) * p.percent))
+		filled := int(math.Round(float64(width) * p.Percent))
 		colors, _ := primitiveStrings(n.Props["gradient"])
 		for x := 0; x < width; x++ {
 			glyph := str(n, "empty", "░")
@@ -239,23 +239,23 @@ func (r *Runtime) paintPrimitive(screen tcell.Screen, n *Node, st tcell.Style, c
 		if str(n, "mode", "numeric") == "dots" {
 			viewport := intersect(cr, clip)
 			width := min(pages, max(0, viewport.W))
-			start := max(0, min(p.page-width/2, pages-width))
+			start := max(0, min(p.Page-width/2, pages-width))
 			for x := 0; x < width; x++ {
 				glyph := str(n, "inactive_dot", "○")
-				if start+x == p.page {
+				if start+x == p.Page {
 					glyph = str(n, "active_dot", "●")
 				}
 				put(screen, viewport.X+x, cr.Y, glyph, st, clip)
 			}
 		} else {
-			put(screen, cr.X, cr.Y, fmt.Sprintf("%d/%d", p.page+1, pages), st, clip)
+			put(screen, cr.X, cr.Y, fmt.Sprintf("%d/%d", p.Page+1, pages), st, clip)
 		}
 	case "timer":
 		stClock := st
 		if r.Focus == n.ID {
 			stClock = stClock.Underline(true).Bold(true)
 		}
-		remaining := time.Duration(p.duration*float64(time.Millisecond)) - p.elapsed
+		remaining := time.Duration(p.Duration*float64(time.Millisecond)) - p.Elapsed
 		if remaining < 0 {
 			remaining = 0
 		}
@@ -265,7 +265,7 @@ func (r *Runtime) paintPrimitive(screen tcell.Screen, n *Node, st tcell.Style, c
 		if r.Focus == n.ID {
 			stClock = stClock.Underline(true).Bold(true)
 		}
-		put(screen, cr.X, cr.Y, primitiveClock(n, p.elapsed, false), stClock, clip)
+		put(screen, cr.X, cr.Y, primitiveClock(n, p.Elapsed, false), stClock, clip)
 	case "help":
 		bindings, _ := n.Props["keys"].([]any)
 		x, y := cr.X, cr.Y
@@ -283,7 +283,7 @@ func (r *Runtime) paintPrimitive(screen tcell.Screen, n *Node, st tcell.Style, c
 			}
 			help, _ := b["help"].(string)
 			label := strings.Join(keys, "/") + " " + help
-			if p.full {
+			if p.Full {
 				put(screen, cr.X, y, label, st, clip)
 				y++
 				if y >= cr.Y+cr.H {
@@ -313,36 +313,36 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 	switch n.Type {
 	case "paginator":
 		p := r.primitive(n)
-		old := p.page
+		old := p.Page
 		switch e.Key() {
 		case tcell.KeyLeft, tcell.KeyUp, tcell.KeyPgUp:
-			p.page--
+			p.Page--
 		case tcell.KeyRight, tcell.KeyDown, tcell.KeyPgDn:
-			p.page++
+			p.Page++
 		case tcell.KeyHome:
-			p.page = 0
+			p.Page = 0
 		case tcell.KeyEnd:
-			p.page = primitivePages(n) - 1
+			p.Page = primitivePages(n) - 1
 		case tcell.KeyRune:
 			switch e.Rune() {
 			case 'h', 'k':
-				p.page--
+				p.Page--
 			case 'l', 'j':
-				p.page++
+				p.Page++
 			default:
 				return false, nil
 			}
 		default:
 			return false, nil
 		}
-		p.page = max(0, min(p.page, primitivePages(n)-1))
-		if p.page == old {
+		p.Page = max(0, min(p.Page, primitivePages(n)-1))
+		if p.Page == old {
 			return true, nil
 		}
 		if action := str(n, "on_change", ""); action != "" {
-			err := r.Action(action, map[string]any{"id": n.ID, "page": p.page, "per_page": num(n, "per_page", 1), "total": num(n, "total", 0)})
+			err := r.Action(action, map[string]any{"id": n.ID, "page": p.Page, "per_page": num(n, "per_page", 1), "total": num(n, "total", 0)})
 			if err != nil {
-				p.page = old
+				p.Page = old
 			}
 			return true, err
 		}
@@ -352,32 +352,32 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 		old := *p
 		switch {
 		case e.Key() == tcell.KeyEnter || (e.Key() == tcell.KeyRune && e.Rune() == ' '):
-			if p.timedOut {
-				p.elapsed = 0
-				p.timedOut = false
-				p.running = true
+			if p.TimedOut {
+				p.Elapsed = 0
+				p.TimedOut = false
+				p.Running = true
 			} else {
-				p.running = !p.running
+				p.Running = !p.Running
 			}
-			p.last = time.Time{}
-			p.initialized = false
-			p.runningProp = p.running
+			p.Last = time.Time{}
+			p.Initialized = false
+			p.RunningProp = p.Running
 			if action := str(n, "on_change", ""); action != "" {
-				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.running, "elapsed": float64(p.elapsed / time.Millisecond)}); err != nil {
+				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.Running, "elapsed": float64(p.Elapsed / time.Millisecond)}); err != nil {
 					*p = old
 					return true, err
 				}
 			}
 			return true, nil
 		case e.Key() == tcell.KeyRune && (e.Rune() == 'r' || e.Rune() == 'R'):
-			p.elapsed = 0
-			p.timedOut = false
-			p.last = time.Time{}
-			p.initialized = false
-			p.running = primitiveBool(n, "running", true)
-			p.runningProp = p.running
+			p.Elapsed = 0
+			p.TimedOut = false
+			p.Last = time.Time{}
+			p.Initialized = false
+			p.Running = primitiveBool(n, "running", true)
+			p.RunningProp = p.Running
 			if action := str(n, "on_change", ""); action != "" {
-				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.running, "elapsed": float64(p.elapsed / time.Millisecond)}); err != nil {
+				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.Running, "elapsed": float64(p.Elapsed / time.Millisecond)}); err != nil {
 					*p = old
 					return true, err
 				}
@@ -389,7 +389,7 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 	case "help":
 		if e.Key() == tcell.KeyRune && e.Rune() == '?' {
 			p := r.primitive(n)
-			p.full = !p.full
+			p.Full = !p.Full
 			return true, nil
 		}
 	}

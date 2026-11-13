@@ -5,22 +5,17 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/VintlGvard/LugoTUI/internal/core"
 	utext "github.com/VintlGvard/LugoTUI/internal/text"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 )
 
-type Theme struct {
-	Foreground      string
-	Background      string
-	FocusForeground string
-}
+type Theme = core.Theme
 
-func DefaultTheme() Theme {
-	return Theme{Foreground: "#d8dee9", Background: "#171c26", FocusForeground: "#88c0d0"}
-}
+func DefaultTheme() Theme { return core.DefaultTheme() }
 
-func (theme Theme) style(n *Node, focused bool) tcell.Style {
+func themeStyle(theme Theme, n *Node, focused bool) tcell.Style {
 	defaults := DefaultTheme()
 	if theme.Foreground == "" {
 		theme.Foreground = defaults.Foreground
@@ -235,7 +230,7 @@ func contentRect(n *Node) Rect {
 	if hasB, _ := borderGlyphsFor(n); hasB {
 		p++
 	}
-	return Rect{n.Rect.X + p, n.Rect.Y + p, max(0, n.Rect.W-2*p), max(0, n.Rect.H-2*p)}
+	return Rect{X: n.Rect.X + p, Y: n.Rect.Y + p, W: max(0, n.Rect.W-2*p), H: max(0, n.Rect.H-2*p)}
 }
 
 func (r *Runtime) scrollDigest() uint64 {
@@ -291,7 +286,7 @@ type canvasImpl struct {
 
 func (c *canvasImpl) Width() int      { return c.cr.W }
 func (c *canvasImpl) Height() int     { return c.cr.H }
-func (c *canvasImpl) Bounds() Rect    { return Rect{0, 0, c.cr.W, c.cr.H} }
+func (c *canvasImpl) Bounds() Rect    { return Rect{X: 0, Y: 0, W: c.cr.W, H: c.cr.H} }
 func (c *canvasImpl) IsFocused() bool { return c.focused }
 
 func (c *canvasImpl) SetCell(x, y int, r rune, st ...tcell.Style) {
@@ -373,8 +368,8 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 			}
 		}
 		curText := str(n, "text", "")
-		if n.layoutText != bound || n.layoutBound != isBound || n.lastPropText != curText {
-			n.layoutText, n.layoutBound, n.lastPropText = bound, isBound, curText
+		if n.LayoutText != bound || n.LayoutBound != isBound || n.LastPropText != curText {
+			n.LayoutText, n.LayoutBound, n.LastPropText = bound, isBound, curText
 			textChanged = true
 		}
 		for _, child := range n.Children {
@@ -404,7 +399,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 		if flag(n, "hidden") || n.Clip.W == 0 || n.Clip.H == 0 {
 			return
 		}
-		st := r.Theme.style(n, r.Focus == n.ID)
+		st := themeStyle(r.Theme, n, r.Focus == n.ID)
 		forceFill := str(n, "position", "") == "absolute" || num(n, "z_index", 0) != 0 || flag(n, "modal")
 		if forceFill || st != bgStyle {
 			fill(target, n.Clip, st)
@@ -436,7 +431,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 				if tfg := str(n, "title_fg", ""); tfg != "" {
 					titleSt = titleSt.Foreground(tcell.GetColor(tfg))
 				}
-				put(target, rect.X+2, rect.Y, title, titleSt, intersect(n.Clip, Rect{rect.X + 1, rect.Y, max(0, rect.W-2), 1}))
+				put(target, rect.X+2, rect.Y, title, titleSt, intersect(n.Clip, Rect{X: rect.X + 1, Y: rect.Y, W: max(0, rect.W-2), H: 1}))
 			}
 		}
 		cr := contentRect(n)
@@ -534,7 +529,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 							ls = ls.Bold(true)
 						}
 					}
-					fill(target, intersect(Rect{cr.X, cr.Y + y, cr.W, 1}, clip), ls)
+					fill(target, intersect(Rect{X: cr.X, Y: cr.Y + y, W: cr.W, H: 1}, clip), ls)
 					itemText := fmt.Sprint(items[index])
 					if cursorPrefix != "" {
 						if index == state.Selected {
@@ -637,7 +632,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 						mode := str(n, "cursor_mode", "blink")
 						if mode != "hidden" && mode != "hide" {
 							p := r.primitive(n)
-							if mode != "blink" || !p.cursorBlinked {
+							if mode != "blink" || !p.CursorBlinked {
 								cursorVisible = true
 								cursorX, cursorY = x, y
 							}
@@ -653,8 +648,8 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 	paint(r.Root, tcell.StyleDefault)
 	if diagnostic != "" && h > 0 {
 		st := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorMaroon)
-		fill(target, Rect{0, h - 1, w, 1}, st)
-		put(target, 0, h-1, diagnostic, st, Rect{0, h - 1, w, 1})
+		fill(target, Rect{X: 0, Y: h - 1, W: w, H: 1}, st)
+		put(target, 0, h-1, diagnostic, st, Rect{X: 0, Y: h - 1, W: w, H: 1})
 		if cursorY == h-1 {
 			cursorVisible = false
 			cursorX, cursorY = -1, -1
@@ -687,7 +682,7 @@ func (r *Runtime) applyScroll(n *Node) {
 	if n.Type == "scroll" && r.State[n.ID] != nil {
 		cr := contentRect(n)
 		state := r.State[n.ID]
-		state.Scroll = max(0, min(state.Scroll, max(0, n.scrollExtent-cr.H)))
+		state.Scroll = max(0, min(state.Scroll, max(0, n.ScrollExtent-cr.H)))
 		if state.Scroll > 0 {
 			viewportClip := intersect(cr, n.Clip)
 			var translate func(*Node, Rect)
@@ -722,18 +717,18 @@ func plainText(n *Node) string {
 	return str(n, "text", str(n, "title", ""))
 }
 
-func (n *Node) cachedLineSpans(text string, width int, wrap bool, limit int) []utext.WrappedLine {
-	if n != nil && n.linesCacheValid && n.linesCacheText == text && n.linesCacheWidth == width && n.linesCacheWrap == wrap && n.linesCacheLimit == limit {
-		return n.linesCache
+func cachedLineSpans(n *Node, text string, width int, wrap bool, limit int) []utext.WrappedLine {
+	if n != nil && n.LinesCacheValid && n.LinesCacheText == text && n.LinesCacheWidth == width && n.LinesCacheWrap == wrap && n.LinesCacheLimit == limit {
+		return n.LinesCache
 	}
 	lines := utext.WrapLines(text, width, wrap, limit)
 	if n != nil {
-		n.linesCacheText = text
-		n.linesCacheWidth = width
-		n.linesCacheWrap = wrap
-		n.linesCacheLimit = limit
-		n.linesCache = lines
-		n.linesCacheValid = true
+		n.LinesCacheText = text
+		n.LinesCacheWidth = width
+		n.LinesCacheWrap = wrap
+		n.LinesCacheLimit = limit
+		n.LinesCache = lines
+		n.LinesCacheValid = true
 	}
 	return lines
 }
@@ -765,7 +760,7 @@ func paintText(screen tcell.Screen, n *Node, text string, base tcell.Style, cr, 
 		text = plainText(n)
 	}
 	spanIndex := 0
-	for y, wl := range n.cachedLineSpans(text, cr.W, str(n, "wrap", "") != "none", max(0, clip.Y+clip.H-cr.Y)) {
+	for y, wl := range cachedLineSpans(n, text, cr.W, str(n, "wrap", "") != "none", max(0, clip.Y+clip.H-cr.Y)) {
 		if y >= cr.H {
 			break
 		}

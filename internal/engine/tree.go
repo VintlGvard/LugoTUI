@@ -1,416 +1,42 @@
 package engine
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
-	"maps"
-	"math"
-	"strconv"
 	"strings"
 
-	"github.com/VintlGvard/LugoTUI/internal/text"
-	"github.com/gdamore/tcell/v2"
+	"github.com/VintlGvard/LugoTUI/internal/core"
 )
 
-type Node struct {
-	Type, ID            string
-	Props               map[string]any
-	Children            []*Node
-	Rect, Clip          Rect
-	layoutText          string
-	layoutBound         bool
-	lastPropText        string
-	intrinsicCache      [2]float64
-	intrinsicValid      bool
-	measuredWidth       int
-	measuredHeightCache float64
-	measuredValid       bool
-	scrollExtent        int
-	linesCacheText      string
-	linesCacheWidth     int
-	linesCacheLimit     int
-	linesCacheWrap      bool
-	linesCacheValid     bool
-	linesCache          []text.WrappedLine
-	inlineActions       map[string]GoActionFunc
-	CustomPaint         func(c Canvas)
-	RawKey              func(e *tcell.EventKey) bool
-}
+type Node = core.Node
+type nodeError = core.NodeError
+type WidgetState = core.WidgetState
+type Operation = core.Operation
 
-type nodeError struct {
-	Node     *Node
-	Property string
-	Err      error
-}
+const (
+	MaxNodes = core.MaxNodes
+	maxNodes = core.MaxNodes
+	MaxText  = core.MaxText
+	maxText  = core.MaxText
+)
 
-func (e *nodeError) Error() string {
-	context := "node <nil>"
-	if e.Node != nil {
-		context = fmt.Sprintf("node %q (type %q)", e.Node.ID, e.Node.Type)
-	}
-	if e.Property != "" {
-		context += fmt.Sprintf(" property %q", e.Property)
-	}
-	return context + ": " + e.Err.Error()
-}
-
-func (e *nodeError) Unwrap() error { return e.Err }
-
-type WidgetState struct {
-	Value                            string
-	Cursor, Anchor, Scroll, Selected int
-	Undo, Redo                       []string
-	collection                       *collectionState
-	primitive                        *primitiveState
-	indexedValue                     string
-	indexedWidth                     int
-	indexedMultiline                 bool
-	indexed                          bool
-	clusters                         []string
-	positions                        [][2]int
-}
-
-type Operation struct {
-	ID      string
-	Props   map[string]any
-	Tree    *Node
-	Replace bool
-}
-
-func str(n *Node, key, fallback string) string {
-	if v, ok := n.Props[key].(string); ok {
-		return v
-	}
-	return fallback
-}
-
-func floatVal(v any) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case int:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	default:
-		return 0, false
-	}
-}
-
-func num(n *Node, key string, fallback float64) float64 {
-	if v, ok := floatVal(n.Props[key]); ok {
-		return v
-	}
-	return fallback
-}
-
-func flag(n *Node, key string) bool { v, _ := n.Props[key].(bool); return v }
-
-func focusable(n *Node) bool {
-	return !flag(n, "disabled") && !flag(n, "hidden") && (n.Type == "input" || n.Type == "textarea" || n.Type == "button" || n.Type == "list" || n.Type == "scroll" || n.Type == "table" || n.Type == "viewport" || n.Type == "tree" || n.Type == "filepicker" || n.Type == "paginator" || n.Type == "timer" || n.Type == "stopwatch" || n.Type == "help" || n.Type == "cursor" || flag(n, "focusable") || n.RawKey != nil)
-}
-
-func cloneValue(v any, depth int) (any, error) {
-	if depth > 32 {
-		return nil, errors.New("value nesting exceeds 32")
-	}
-	switch value := v.(type) {
-	case map[string]any:
-		copy := make(map[string]any, len(value))
-		for key, item := range value {
-			cloned, err := cloneValue(item, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			copy[key] = cloned
-		}
-		return copy, nil
-	case []any:
-		copy := make([]any, len(value))
-		for i, item := range value {
-			cloned, err := cloneValue(item, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			copy[i] = cloned
-		}
-		return copy, nil
-	case []string:
-		return append([]string(nil), value...), nil
-	case BorderGlyphs:
-		return v, nil
-	case nil, string, bool, int, int64, float64:
-		return v, nil
-	default:
-		return nil, fmt.Errorf("unsupported Go type %T", v)
-	}
-}
-
-func CopyValue(v any) any {
-	cloned, err := cloneValue(v, 0)
-	if err != nil {
-		return nil
-	}
-	return cloned
-}
-
-func cloneNode(n *Node) *Node {
-	if n == nil {
-		return nil
-	}
-	c := *n
-	c.Props = maps.Clone(n.Props)
-	if c.Props == nil {
-		c.Props = make(map[string]any)
-	}
-	if km, ok := n.Props["keymap"].(map[string]any); ok {
-		c.Props["keymap"] = maps.Clone(km)
-	}
-	c.inlineActions = maps.Clone(n.inlineActions)
-	c.Children = make([]*Node, len(n.Children))
-	for i, ch := range n.Children {
-		c.Children[i] = cloneNode(ch)
-	}
-	return &c
-}
-
-func findNode(root *Node, id string) *Node {
-	if root == nil || id == "" {
-		return nil
-	}
-	if root.ID == id {
-		return root
-	}
-	for _, c := range root.Children {
-		if found := findNode(c, id); found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
-func ordered(n *Node) iter.Seq[*Node] {
-	return func(yield func(*Node) bool) {
-		var walk func(*Node) bool
-		walk = func(n *Node) bool {
-			if !yield(n) {
-				return false
-			}
-			for _, child := range n.Children {
-				if !walk(child) {
-					return false
-				}
-			}
-			return true
-		}
-		walk(n)
-	}
-}
-
-const MaxNodes = 4096
-const maxNodes = MaxNodes
-
-const MaxText = 1 << 20
-const maxText = MaxText
+func str(n *Node, key, fallback string) string          { return core.Str(n, key, fallback) }
+func floatVal(v any) (float64, bool)                    { return core.FloatVal(v) }
+func num(n *Node, key string, fallback float64) float64 { return core.Num(n, key, fallback) }
+func flag(n *Node, key string) bool                     { return core.Flag(n, key) }
+func focusable(n *Node) bool                            { return core.Focusable(n) }
+func cloneValue(v any, depth int) (any, error)          { return core.CloneValue(v) }
+func CopyValue(v any) any                               { return core.CopyValue(v) }
+func cloneNode(n *Node) *Node                           { return core.CloneNode(n) }
+func findNode(root *Node, id string) *Node              { return core.FindNode(root, id) }
+func ordered(n *Node) iter.Seq[*Node]                   { return core.Ordered(n) }
+func finite(v float64) bool                             { return core.Finite(v) }
+func ValidateModel(data map[string]any) error           { return core.ValidateModel(data) }
+func AutoAssignIDs(root *Node)                          { core.AutoAssignIDs(root) }
 
 func validateTree(root *Node) (map[string]*Node, error) {
-	ids := map[string]*Node{}
-	count, total := 0, 0
-	var walk func(*Node, int) error
-	walk = func(n *Node, d int) (err error) {
-		property := ""
-		defer func() {
-			var contextual *nodeError
-			if err != nil && !errors.As(err, &contextual) {
-				err = &nodeError{Node: n, Property: property, Err: err}
-			}
-		}()
-		if n == nil {
-			return errors.New("nil node")
-		}
-		count++
-		if count > maxNodes || d > 64 {
-			return errors.New("tree exceeds limits")
-		}
-		switch n.Type {
-		case "box", "row", "column", "panel", "text", "input", "textarea", "button", "list", "scroll", "overlay", "table", "viewport", "tree", "filepicker", "spinner", "progress", "paginator", "timer", "stopwatch", "help", "cursor", "custom":
-		default:
-			return fmt.Errorf("unknown component %q", n.Type)
-		}
-		if n.ID != "" {
-			if len(n.ID) > 128 {
-				return errors.New("id exceeds 128 bytes")
-			}
-			if ids[n.ID] != nil {
-				return fmt.Errorf("duplicate id %q", n.ID)
-			}
-			ids[n.ID] = n
-		}
-		if (focusable(n) || flag(n, "modal") || n.Type == "scroll" || n.Type == "spinner" || n.Type == "progress" || n.Type == "cursor") && n.ID == "" {
-			return fmt.Errorf("%s requires id", n.Type)
-		}
-		for k, v := range n.Props {
-			property = k
-			switch k {
-			case "width", "height", "basis", "min_width", "max_width", "min_height", "max_height", "top", "right", "bottom", "left":
-				if s, ok := v.(string); ok {
-					if s != "auto" {
-						if !strings.HasSuffix(s, "%") {
-							return fmt.Errorf("%s: invalid %s", n.ID, k)
-						}
-						f, e := strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64)
-						if e != nil || !finite(f) || f < 0 || f > 10000 {
-							return fmt.Errorf("invalid percentage %s", s)
-						}
-					}
-				} else if f, ok := floatVal(v); !ok || !finite(f) || f < 0 || f > 1e6 {
-					return fmt.Errorf("invalid %s", k)
-				}
-			case "grow", "shrink", "padding", "margin", "gap":
-				if f, ok := floatVal(v); !ok || !finite(f) || f < 0 || f > 1e6 {
-					return fmt.Errorf("invalid %s", k)
-				}
-			case "direction":
-				if v != "row" && v != "column" {
-					return errors.New("invalid direction")
-				}
-			case "align", "align_self":
-				if v != "start" && v != "center" && v != "end" && v != "stretch" {
-					return errors.New("invalid alignment")
-				}
-			case "justify":
-				if v != "start" && v != "center" && v != "end" && v != "space-between" && v != "space-around" {
-					return errors.New("invalid justify")
-				}
-			case "position":
-				if v != "absolute" && v != "relative" {
-					return errors.New("invalid position")
-				}
-			case "text", "title", "bind", "source", "on_submit", "on_change", "on_select", "on_click", "on_key", "fg", "bg", "wrap", "nav_up", "nav_down", "nav_left", "nav_right", "border_style", "border_fg", "border_bg", "border_color", "title_fg", "cursor_prefix", "button_style", "prefix", "suffix", "selected_fg", "selected_bg":
-				if _, ok := v.(string); !ok {
-					return fmt.Errorf("%s must be string", k)
-				}
-			case "border":
-				switch b := v.(type) {
-				case bool:
-				case string:
-					switch strings.ToLower(b) {
-					case "single", "rounded", "double", "thick", "heavy", "ascii", "none", "true", "false":
-					default:
-						return fmt.Errorf("invalid border style %q", b)
-					}
-				default:
-					return errors.New("border must be boolean or string")
-				}
-			case "border_glyphs":
-				if _, ok := v.(BorderGlyphs); !ok {
-					return errors.New("border_glyphs must be BorderGlyphs")
-				}
-			case "hidden", "disabled", "bold", "modal", "spatial_nav", "selected_bold", "focusable", "show_cursor":
-				if _, ok := v.(bool); !ok {
-					return fmt.Errorf("%s must be boolean", k)
-				}
-			case "nav":
-				m, ok := v.(map[string]any)
-				if !ok {
-					return errors.New("nav must be object")
-				}
-				for dir, target := range m {
-					if dir != "up" && dir != "down" && dir != "left" && dir != "right" {
-						return fmt.Errorf("invalid nav direction %q", dir)
-					}
-					if _, ok := target.(string); !ok {
-						return fmt.Errorf("nav.%s must be string", dir)
-					}
-				}
-			case "keymap":
-				m, ok := v.(map[string]any)
-				if !ok {
-					return errors.New("keymap must be object")
-				}
-				for keyName, act := range m {
-					if _, ok := act.(string); !ok {
-						return fmt.Errorf("keymap[%q] action must be string", keyName)
-					}
-				}
-			case "z_index":
-				if f, ok := floatVal(v); !ok || !finite(f) || math.Abs(f) > 1e6 {
-					return errors.New("invalid z_index")
-				}
-			case "spans":
-				a, ok := v.([]any)
-				if !ok {
-					return errors.New("spans must be array")
-				}
-				for _, v := range a {
-					m, ok := v.(map[string]any)
-					if !ok {
-						return errors.New("span must be object")
-					}
-					for key, value := range m {
-						switch key {
-						case "text", "fg", "bg":
-							s, ok := value.(string)
-							if !ok {
-								return errors.New("span string required")
-							}
-							total += len(s)
-						case "bold":
-							if _, ok := value.(bool); !ok {
-								return errors.New("span bold must be boolean")
-							}
-						default:
-							return fmt.Errorf("unknown span property %s", key)
-						}
-					}
-				}
-			case "items":
-				if _, ok := v.([]any); !ok {
-					return errors.New("items must be array")
-				}
-			case "columns", "rows", "show_header", "soft_wrap", "highlights", "filterable", "show_title", "show_status", "show_help", "show_pagination", "page_size", "query", "on_navigate", "allowed_extensions", "show_hidden", "file_allowed", "dir_allowed", "frames", "preset", "interval", "running", "percent", "animated", "duration", "gradient", "show_percentage", "fill", "empty", "page", "per_page", "total", "mode", "active_dot", "inactive_dot", "reset_key", "on_timeout", "keys", "full", "separator", "echo", "echo_character", "placeholder", "prompt", "char_limit", "suggestions", "show_suggestions", "validation_pattern", "validation_error", "line_numbers", "cursor_mode", "cursor_blink_speed", "char", "blink_speed", "show_size", "show_permissions", "show_line_numbers", "percent_format", "open_char", "close_char", "cursor_char", "branch_indent", "subsecond", "format":
-			default:
-				return fmt.Errorf("unknown property %q", k)
-			}
-			if s, ok := v.(string); ok {
-				total += len(s)
-			}
-		}
-		property = ""
-		for _, validate := range []func(*Node) error{validateCollection, validatePrimitive, validateEditor} {
-			if err := validate(n); err != nil {
-				return err
-			}
-		}
-		if total > maxText {
-			return errors.New("tree text exceeds 1 MiB")
-		}
-		for _, c := range n.Children {
-			if e := walk(c, d+1); e != nil {
-				return e
-			}
-		}
-		return nil
-	}
-	return ids, walk(root, 0)
-}
-
-func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
-
-func ValidateModel(data map[string]any) error {
-	if len(data) > 1024 {
-		return errors.New("model exceeds 1024 keys")
-	}
-	b, e := json.Marshal(data)
-	if e != nil {
-		return e
-	}
-	if len(b) > maxText {
-		return errors.New("model exceeds 1 MiB")
-	}
-	return nil
+	return core.ValidateTree(root, validateCollection, validatePrimitive, validateEditor)
 }
 
 func (r *Runtime) validateActions() error {
@@ -450,60 +76,23 @@ func (r *Runtime) validateActions() error {
 	return nil
 }
 
-func AutoAssignIDs(root *Node) {
-	if root == nil {
-		return
+func wrapInlineAction(raw any) GoActionFunc {
+	switch fn := raw.(type) {
+	case GoActionFunc:
+		return fn
+	case func() error:
+		if fn == nil {
+			return nil
+		}
+		return func(_ *Runtime, _ map[string]any) error { return fn() }
+	case func(map[string]any) error:
+		if fn == nil {
+			return nil
+		}
+		return func(_ *Runtime, payload map[string]any) error { return fn(payload) }
+	default:
+		return nil
 	}
-	used := map[string]bool{}
-	seenCollect := map[*Node]bool{}
-	var collect func(*Node, int)
-	collect = func(n *Node, depth int) {
-		if n == nil || depth > 64 || seenCollect[n] {
-			return
-		}
-		seenCollect[n] = true
-		if n.ID != "" {
-			used[n.ID] = true
-		}
-		for _, c := range n.Children {
-			collect(c, depth+1)
-		}
-	}
-	collect(root, 0)
-
-	seenAssign := map[*Node]bool{}
-	var assign func(*Node, string, int, int)
-	assign = func(n *Node, parentID string, idx int, depth int) {
-		if n == nil || depth > 64 || seenAssign[n] {
-			return
-		}
-		seenAssign[n] = true
-		if n.Props == nil {
-			n.Props = map[string]any{}
-		}
-		if n.ID == "" {
-			base := "root"
-			if parentID != "" {
-				suffix := fmt.Sprintf("%s_%d", n.Type, idx)
-				if b, ok := n.Props["bind"].(string); ok && b != "" {
-					suffix = n.Type + "_" + b
-				} else if act, ok := n.Props["on_click"].(string); ok && act != "" {
-					suffix = n.Type + "_" + act
-				}
-				base = parentID + "." + suffix
-			}
-			candidate := base
-			for seq := 2; used[candidate]; seq++ {
-				candidate = fmt.Sprintf("%s_%d", base, seq)
-			}
-			n.ID = candidate
-			used[candidate] = true
-		}
-		for i, c := range n.Children {
-			assign(c, n.ID, i, depth+1)
-		}
-	}
-	assign(root, "", 0, 0)
 }
 
 func (r *Runtime) bindInlineActions(root *Node) {
@@ -516,15 +105,16 @@ func (r *Runtime) bindInlineActions(root *Node) {
 	seen := map[*Node]bool{}
 	var walk func(*Node, int)
 	walk = func(n *Node, depth int) {
-		if n == nil || depth > 64 || seen[n] {
+		if n == nil || depth > core.MaxDepth || seen[n] {
 			return
 		}
 		seen[n] = true
-		if len(n.inlineActions) > 0 {
+		if len(n.InlineActions) > 0 {
 			if n.Props == nil {
 				n.Props = map[string]any{}
 			}
-			for prop, fn := range n.inlineActions {
+			for prop, raw := range n.InlineActions {
+				fn := wrapInlineAction(raw)
 				if fn == nil {
 					continue
 				}

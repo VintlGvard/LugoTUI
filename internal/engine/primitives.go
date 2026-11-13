@@ -7,33 +7,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/VintlGvard/LugoTUI/internal/core"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 )
 
-type primitiveState struct {
-	initialized                    bool
-	last                           time.Time
-	elapsed                        time.Duration
-	duration, resetKey             float64
-	running, runningProp, timedOut bool
-	frame                          int
-	frameElapsed                   time.Duration
-	percent, from, target          float64
-	progressElapsed                time.Duration
-	page                           int
-	pageProp                       float64
-	full, fullProp                 bool
-	cursorBlinked                  bool
-	cursorElapsed                  time.Duration
-}
+type primitiveState = core.PrimitiveState
 
 func clonePrimitiveState(s *primitiveState) *primitiveState {
-	if s == nil {
-		return nil
-	}
-	copy := *s
-	return &copy
+	return core.ClonePrimitiveState(s)
 }
 
 var primitiveSpinners = map[string][]string{
@@ -294,49 +276,49 @@ func (r *Runtime) primitive(n *Node) *primitiveState {
 	w := r.State[n.ID]
 	running := primitiveBool(n, "running", true)
 	duration, reset := num(n, "duration", 0), num(n, "reset_key", 0)
-	if w.primitive == nil {
-		w.primitive = &primitiveState{duration: duration, resetKey: reset, running: running, runningProp: running, page: int(num(n, "page", 0)), pageProp: num(n, "page", 0), full: flag(n, "full"), fullProp: flag(n, "full")}
+	if w.Primitive == nil {
+		w.Primitive = &primitiveState{Duration: duration, ResetKey: reset, Running: running, RunningProp: running, Page: int(num(n, "page", 0)), PageProp: num(n, "page", 0), Full: flag(n, "full"), FullProp: flag(n, "full")}
 	}
-	p := w.primitive
-	if duration != p.duration || reset != p.resetKey {
-		p.duration, p.resetKey = duration, reset
+	p := w.Primitive
+	if duration != p.Duration || reset != p.ResetKey {
+		p.Duration, p.ResetKey = duration, reset
 		if n.Type == "timer" || n.Type == "stopwatch" {
-			p.elapsed = 0
-			p.timedOut = false
-			p.last = time.Time{}
-			p.initialized = false
-			p.running = running
+			p.Elapsed = 0
+			p.TimedOut = false
+			p.Last = time.Time{}
+			p.Initialized = false
+			p.Running = running
 		}
 	}
-	if running != p.runningProp {
-		p.runningProp = running
-		p.running = running
-		if (n.Type == "timer" || n.Type == "stopwatch") && p.timedOut && running {
-			p.timedOut = false
-			p.elapsed = 0
+	if running != p.RunningProp {
+		p.RunningProp = running
+		p.Running = running
+		if (n.Type == "timer" || n.Type == "stopwatch") && p.TimedOut && running {
+			p.TimedOut = false
+			p.Elapsed = 0
 		}
-		p.last = time.Time{}
-		p.initialized = false
+		p.Last = time.Time{}
+		p.Initialized = false
 	}
-	if page := num(n, "page", 0); page != p.pageProp {
-		p.pageProp = page
-		p.page = int(page)
+	if page := num(n, "page", 0); page != p.PageProp {
+		p.PageProp = page
+		p.Page = int(page)
 	}
-	if full := flag(n, "full"); full != p.fullProp {
-		p.fullProp = full
-		p.full = full
+	if full := flag(n, "full"); full != p.FullProp {
+		p.FullProp = full
+		p.Full = full
 	}
 	target := num(n, "percent", 0)
-	if target != p.target {
-		p.from = p.percent
-		p.target = target
-		p.progressElapsed = 0
+	if target != p.Target {
+		p.From = p.Percent
+		p.Target = target
+		p.ProgressElapsed = 0
 	}
 	if !primitiveBool(n, "animated", true) || num(n, "duration", 250) == 0 {
-		p.percent = p.target
+		p.Percent = p.Target
 	}
 	if n.Type == "paginator" {
-		p.page = max(0, min(p.page, primitivePages(n)-1))
+		p.Page = max(0, min(p.Page, primitivePages(n)-1))
 	}
 	return p
 }

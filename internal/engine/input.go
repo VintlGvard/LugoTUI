@@ -1,28 +1,17 @@
 package engine
 
 import (
-	"cmp"
 	"errors"
 	"iter"
 	"math"
-	"slices"
 	"sort"
 	"strings"
 
+	"github.com/VintlGvard/LugoTUI/internal/core"
 	"github.com/gdamore/tcell/v2"
 )
 
-func sortedChildren(n *Node) []*Node {
-	compare := func(a, b *Node) int {
-		return cmp.Compare(num(a, "z_index", 0), num(b, "z_index", 0))
-	}
-	if slices.IsSortedFunc(n.Children, compare) {
-		return n.Children
-	}
-	children := slices.Clone(n.Children)
-	slices.SortStableFunc(children, compare)
-	return children
-}
+func sortedChildren(n *Node) []*Node { return core.SortedChildren(n) }
 
 func (r *Runtime) nodeVisibleForFocus(n *Node) bool {
 	if !focusable(n) {
@@ -264,26 +253,7 @@ func (r *Runtime) focusDirection(dir string) bool {
 	return false
 }
 
-func visibleNodes(n *Node) iter.Seq[*Node] {
-	return func(yield func(*Node) bool) {
-		var walk func(*Node) bool
-		walk = func(n *Node) bool {
-			if flag(n, "hidden") {
-				return true
-			}
-			if !yield(n) {
-				return false
-			}
-			for _, child := range sortedChildren(n) {
-				if !walk(child) {
-					return false
-				}
-			}
-			return true
-		}
-		walk(n)
-	}
-}
+func visibleNodes(n *Node) iter.Seq[*Node] { return core.VisibleNodes(n) }
 
 func (r *Runtime) scope() *Node {
 	root := r.Root
@@ -905,26 +875,6 @@ func replaceSelection(s *WidgetState, text string) {
 
 var errInputLimit = errors.New("input exceeds 1 MiB")
 
-func editorPositions(g []string, width int, multiline bool) [][2]int {
-	p := make([][2]int, len(g)+1)
-	x, y := 0, 0
-	for i, s := range g {
-		if multiline && s != "\n" && x+textWidth(s) > width && x > 0 {
-			x = 0
-			y++
-		}
-		p[i] = [2]int{x, y}
-		if s == "\n" && multiline {
-			x = 0
-			y++
-		} else {
-			x += textWidth(s)
-		}
-	}
-	p[len(g)] = [2]int{x, y}
-	return p
-}
-
 func nearestPosition(p [][2]int, x, y int) int {
 	best, rowDist, columnDist := 0, math.MaxInt, math.MaxInt
 	for i, c := range p {
@@ -999,21 +949,6 @@ func (r *Runtime) releaseMouse(e *tcell.EventMouse) bool {
 		return true
 	}
 	return false
-}
-
-func (s *WidgetState) EditorIndex(width int, multiline bool) ([]string, [][2]int) {
-	if !s.indexed || s.indexedValue != s.Value {
-		s.clusters = graphemes(s.Value)
-		s.positions = nil
-		s.indexedValue = s.Value
-	}
-	if s.positions == nil || s.indexedWidth != width || s.indexedMultiline != multiline {
-		s.positions = editorPositions(s.clusters, width, multiline)
-		s.indexedWidth = width
-		s.indexedMultiline = multiline
-	}
-	s.indexed = true
-	return s.clusters, s.positions
 }
 
 func visibleEditorRange(positions [][2]int, scroll, height int) (int, int) {

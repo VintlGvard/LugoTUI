@@ -4,14 +4,13 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/VintlGvard/LugoTUI/internal/core"
 )
 
-type Rect struct{ X, Y, W, H int }
+type Rect = core.Rect
 
-func intersect(a, b Rect) Rect {
-	x, y := max(a.X, b.X), max(a.Y, b.Y)
-	return Rect{x, y, max(0, min(a.X+a.W, b.X+b.W)-x), max(0, min(a.Y+a.H, b.Y+b.H)-y)}
-}
+func intersect(a, b Rect) Rect { return a.Intersect(b) }
 
 func size(n *Node, key string, parent int, fallback float64) float64 {
 	if f, ok := floatVal(n.Props[key]); ok {
@@ -29,8 +28,8 @@ func bounded(n *Node, key string, v float64, parent int) float64 {
 }
 
 func intrinsic(n *Node) (float64, float64) {
-	if n.intrinsicValid {
-		return n.intrinsicCache[0], n.intrinsicCache[1]
+	if n.IntrinsicValid {
+		return n.IntrinsicCache[0], n.IntrinsicCache[1]
 	}
 	if flag(n, "hidden") {
 		return 0, 0
@@ -81,14 +80,14 @@ func intrinsic(n *Node) (float64, float64) {
 			h += max(0, count-1) * int(num(n, "gap", 0))
 		}
 	}
-	n.intrinsicCache = [2]float64{float64(w) + 2*pad, float64(h) + 2*pad}
-	n.intrinsicValid = true
-	return n.intrinsicCache[0], n.intrinsicCache[1]
+	n.IntrinsicCache = [2]float64{float64(w) + 2*pad, float64(h) + 2*pad}
+	n.IntrinsicValid = true
+	return n.IntrinsicCache[0], n.IntrinsicCache[1]
 }
 
 func Layout(root *Node, w, h int) error {
 	invalidateMeasure(root)
-	place(root, Rect{0, 0, max(0, w), max(0, h)}, Rect{0, 0, max(0, w), max(0, h)})
+	place(root, Rect{X: 0, Y: 0, W: max(0, w), H: max(0, h)}, Rect{X: 0, Y: 0, W: max(0, w), H: max(0, h)})
 	return nil
 }
 
@@ -99,16 +98,16 @@ func place(n *Node, r, clip Rect) {
 		n.Rect.W = 0
 		n.Rect.H = 0
 		n.Clip = Rect{}
-		n.scrollExtent = 0
+		n.ScrollExtent = 0
 		return
 	}
 	pad := int(num(n, "padding", 0))
 	if flag(n, "border") || n.Type == "panel" {
 		pad++
 	}
-	inner := Rect{r.X + pad, r.Y + pad, max(0, r.W-2*pad), max(0, r.H-2*pad)}
+	inner := Rect{X: r.X + pad, Y: r.Y + pad, W: max(0, r.W-2*pad), H: max(0, r.H-2*pad)}
 	if n.Type == "scroll" {
-		n.scrollExtent = inner.H
+		n.ScrollExtent = inner.H
 	}
 	if len(n.Children) == 0 {
 		return
@@ -121,7 +120,7 @@ func place(n *Node, r, clip Rect) {
 	}
 	if n.Type == "scroll" && !row {
 		extent := max(inner.H, int(math.Ceil(measuredHeight(n, r.W)))-(r.H-inner.H))
-		n.scrollExtent = extent
+		n.ScrollExtent = extent
 		main = extent
 	}
 	axis, caxis := "height", "width"
@@ -241,9 +240,9 @@ func place(n *Node, r, clip Rect) {
 		case "end":
 			off = cross - cs - m
 		}
-		cr := Rect{inner.X + off, inner.Y + start, cs, max(0, end-start)}
+		cr := Rect{X: inner.X + off, Y: inner.Y + start, W: cs, H: max(0, end-start)}
 		if row {
-			cr = Rect{inner.X + start, inner.Y + off, max(0, end-start), cs}
+			cr = Rect{X: inner.X + start, Y: inner.Y + off, W: max(0, end-start), H: cs}
 		}
 		place(c, cr, childClip)
 		cursor += vals[i] + float64(m) + gap
@@ -274,15 +273,15 @@ func place(n *Node, r, clip Rect) {
 		if !t && b {
 			top = float64(inner.H) - bottom - ch
 		}
-		place(c, Rect{inner.X + int(math.Round(left)), inner.Y + int(math.Round(top)), int(math.Round(cw)), int(math.Round(ch))}, childClip)
+		place(c, Rect{X: inner.X + int(math.Round(left)), Y: inner.Y + int(math.Round(top)), W: int(math.Round(cw)), H: int(math.Round(ch))}, childClip)
 	}
 }
 
 func measureText(n *Node) string {
 	text := plainText(n)
-	if n.layoutBound {
+	if n.LayoutBound {
 		if _, spans := n.Props["spans"].([]any); !spans {
-			text = n.layoutText
+			text = n.LayoutText
 		}
 	}
 	if n.Type == "button" {
@@ -292,18 +291,18 @@ func measureText(n *Node) string {
 }
 
 func invalidateMeasure(n *Node) {
-	n.intrinsicValid = false
-	n.measuredValid = false
+	n.IntrinsicValid = false
+	n.MeasuredValid = false
 	for _, c := range n.Children {
 		invalidateMeasure(c)
 	}
 }
 
 func measuredHeight(n *Node, width int) (heightResult float64) {
-	if n.measuredValid && n.measuredWidth == width {
-		return n.measuredHeightCache
+	if n.MeasuredValid && n.MeasuredWidth == width {
+		return n.MeasuredHeightCache
 	}
-	defer func() { n.measuredValid = true; n.measuredWidth = width; n.measuredHeightCache = heightResult }()
+	defer func() { n.MeasuredValid = true; n.MeasuredWidth = width; n.MeasuredHeightCache = heightResult }()
 	_, h := intrinsic(n)
 	if flag(n, "hidden") {
 		return 0

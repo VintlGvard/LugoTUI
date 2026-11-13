@@ -48,7 +48,7 @@ func TestCursorComponent(t *testing.T) {
 		t.Fatal("cursor not scheduled")
 	}
 	p := r.primitive(n)
-	if p.cursorBlinked {
+	if p.CursorBlinked {
 		t.Fatal("initially blinked")
 	}
 	if err := r.Tick(epoch); err != nil {
@@ -57,7 +57,7 @@ func TestCursorComponent(t *testing.T) {
 	if err := r.Tick(epoch.Add(500 * time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	if !p.cursorBlinked {
+	if !p.CursorBlinked {
 		t.Fatal("cursor did not blink")
 	}
 }
@@ -136,7 +136,7 @@ func TestPrimitiveClocks(t *testing.T) {
 	if err := r.Tick(epoch.Add(400 * time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.primitive(n).elapsed; got != 400*time.Millisecond {
+	if got := r.primitive(n).Elapsed; got != 400*time.Millisecond {
 		t.Fatalf("elapsed %v", got)
 	}
 	handled, err := r.keyPrimitive(n, tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone))
@@ -144,34 +144,34 @@ func TestPrimitiveClocks(t *testing.T) {
 		t.Fatal(handled, err)
 	}
 	r.Tick(epoch.Add(time.Hour))
-	if r.primitive(n).elapsed != 400*time.Millisecond {
+	if r.primitive(n).Elapsed != 400*time.Millisecond {
 		t.Fatal("paused clock advanced")
 	}
 	r.keyPrimitive(n, tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone))
 	r.Tick(epoch.Add(2 * time.Hour))
 	r.Tick(epoch.Add(2*time.Hour + 600*time.Millisecond))
-	if r.NeedsTick() || !r.primitive(n).timedOut {
+	if r.NeedsTick() || !r.primitive(n).TimedOut {
 		t.Fatal("timer did not finish")
 	}
 	n.Props["reset_key"] = float64(1)
-	if !r.NeedsTick() || r.primitive(n).elapsed != 0 {
+	if !r.NeedsTick() || r.primitive(n).Elapsed != 0 {
 		t.Fatal("reset failed")
 	}
 	n.Props["duration"] = float64(2000)
 	r.Tick(epoch)
 	r.Tick(epoch.Add(time.Second))
-	if r.primitive(n).elapsed != time.Second {
+	if r.primitive(n).Elapsed != time.Second {
 		t.Fatal("duration reset failed")
 	}
 	r, n = primitiveTestRuntime("stopwatch", map[string]any{})
 	r.Tick(epoch)
 	r.Tick(epoch.Add(1500 * time.Millisecond))
 	r.Tick(epoch.Add(time.Second))
-	if r.primitive(n).elapsed != 1500*time.Millisecond {
+	if r.primitive(n).Elapsed != 1500*time.Millisecond {
 		t.Fatal("clock moved backwards")
 	}
 	r.keyPrimitive(n, tcell.NewEventKey(tcell.KeyRune, 'r', tcell.ModNone))
-	if r.primitive(n).elapsed != 0 {
+	if r.primitive(n).Elapsed != 0 {
 		t.Fatal("stopwatch reset failed")
 	}
 }
@@ -184,7 +184,7 @@ func TestPrimitiveZeroEpochAndVisibility(t *testing.T) {
 	if err := r.Tick(time.Time{}.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if r.primitive(n).elapsed != time.Second {
+	if r.primitive(n).Elapsed != time.Second {
 		t.Fatal("zero epoch lost")
 	}
 	n.Props["hidden"] = true
@@ -209,7 +209,7 @@ func TestPrimitiveTimeoutCallbackOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Tick(epoch.Add(2 * time.Second))
-	if count != 1 || !r.primitive(n).timedOut {
+	if count != 1 || !r.primitive(n).TimedOut {
 		t.Fatalf("count %d", count)
 	}
 }
@@ -219,19 +219,19 @@ func TestPrimitiveSpinnerProgressPagination(t *testing.T) {
 	r, n := primitiveTestRuntime("spinner", map[string]any{"frames": []any{"a", "b", "c"}, "interval": float64(20)})
 	r.Tick(epoch)
 	r.Tick(epoch.Add(100 * time.Millisecond))
-	if r.primitive(n).frame != 2 {
+	if r.primitive(n).Frame != 2 {
 		t.Fatal("frame interval mismatch")
 	}
 	r, n = primitiveTestRuntime("progress", map[string]any{"percent": float64(1), "duration": float64(100)})
 	r.Tick(epoch)
 	r.Tick(epoch.Add(50 * time.Millisecond))
-	if r.primitive(n).percent != 0.5 {
+	if r.primitive(n).Percent != 0.5 {
 		t.Fatal("progress not animated")
 	}
 	n.Props["percent"] = float64(0)
 	r.NeedsTick()
 	r.Tick(epoch.Add(100 * time.Millisecond))
-	if r.primitive(n).percent != 0.25 {
+	if r.primitive(n).Percent != 0.25 {
 		t.Fatal("progress did not retarget")
 	}
 	r.Tick(epoch.Add(150 * time.Millisecond))
@@ -240,23 +240,23 @@ func TestPrimitiveSpinnerProgressPagination(t *testing.T) {
 	}
 	n.Props["animated"] = false
 	n.Props["percent"] = 0.7
-	if r.primitive(n).percent != 0.7 {
+	if r.primitive(n).Percent != 0.7 {
 		t.Fatal("static progress wrong")
 	}
 	r, n = primitiveTestRuntime("paginator", map[string]any{"total": float64(25), "per_page": float64(10)})
 	for i := 0; i < 5; i++ {
 		r.keyPrimitive(n, tcell.NewEventKey(tcell.KeyRight, 0, tcell.ModNone))
 	}
-	if r.primitive(n).page != 2 {
+	if r.primitive(n).Page != 2 {
 		t.Fatal("page not clamped")
 	}
 	n.Props["total"] = float64(1)
-	if r.primitive(n).page != 0 {
+	if r.primitive(n).Page != 0 {
 		t.Fatal("total change not clamped")
 	}
 	copy := clonePrimitiveState(r.primitive(n))
-	copy.page = 5
-	if r.primitive(n).page != 0 {
+	copy.Page = 5
+	if r.primitive(n).Page != 0 {
 		t.Fatal("cloned state aliases")
 	}
 }
@@ -268,11 +268,11 @@ func TestPrimitiveDotsKeepActiveVisible(t *testing.T) {
 	}
 	defer screen.Fini()
 	screen.SetSize(10, 1)
-	for _, clip := range []Rect{{0, 0, 3, 1}, {2, 0, 1, 1}} {
+	for _, clip := range []Rect{{X: 0, Y: 0, W: 3, H: 1}, {X: 2, Y: 0, W: 1, H: 1}} {
 		for _, page := range []float64{0, 1, 50, 99} {
 			screen.Clear()
 			r, n := primitiveTestRuntime("paginator", map[string]any{"mode": "dots", "page": page, "per_page": float64(1), "total": float64(100)})
-			r.paintPrimitive(screen, n, tcell.StyleDefault, Rect{0, 0, 3, 1}, clip)
+			r.paintPrimitive(screen, n, tcell.StyleDefault, Rect{X: 0, Y: 0, W: 3, H: 1}, clip)
 			active := 0
 			for x := clip.X; x < clip.X+clip.W; x++ {
 				glyph, _, _, _ := screen.GetContent(x, 0)
@@ -295,7 +295,7 @@ func TestPrimitivePaintAndBindings(t *testing.T) {
 	defer screen.Fini()
 	screen.SetSize(30, 5)
 	r, n := primitiveTestRuntime("progress", map[string]any{"percent": float64(0.5), "animated": false, "show_percentage": false, "fill": "#", "empty": ".", "gradient": []any{"red", "blue"}})
-	if !r.paintPrimitive(screen, n, tcell.StyleDefault, Rect{0, 0, 10, 1}, Rect{2, 0, 5, 1}) {
+	if !r.paintPrimitive(screen, n, tcell.StyleDefault, Rect{X: 0, Y: 0, W: 10, H: 1}, Rect{X: 2, Y: 0, W: 5, H: 1}) {
 		t.Fatal("not painted")
 	}
 	for x := 2; x < 7; x++ {
@@ -322,7 +322,7 @@ func TestPrimitivePaintAndBindings(t *testing.T) {
 	if handled, err := r.bindingKey(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone)); !handled || err != nil || count != 1 {
 		t.Fatal(handled, err, count)
 	}
-	if handled, err := r.keyPrimitive(n, tcell.NewEventKey(tcell.KeyRune, '?', tcell.ModNone)); !handled || err != nil || !r.primitive(n).full {
+	if handled, err := r.keyPrimitive(n, tcell.NewEventKey(tcell.KeyRune, '?', tcell.ModNone)); !handled || err != nil || !r.primitive(n).Full {
 		t.Fatal("help toggle failed")
 	}
 	if !primitiveKeyMatches("ctrl+c", tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModCtrl)) {
@@ -344,7 +344,7 @@ func TestTimerStopwatchPropagateAndRollbackOnChangeError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "clock_boom") {
 		t.Fatalf("expected clock_boom error from stopwatch on_change, got %v", err)
 	}
-	if r.primitive(r.Nodes["sw"]).running {
+	if r.primitive(r.Nodes["sw"]).Running {
 		t.Fatal("stopwatch running state was not rolled back after failed on_change")
 	}
 }

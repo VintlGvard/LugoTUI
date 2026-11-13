@@ -495,11 +495,11 @@ func (r *Runtime) restore(old *Runtime) {
 			copy := *old.State[id]
 			copy.Undo = append([]string(nil), copy.Undo...)
 			copy.Redo = append([]string(nil), copy.Redo...)
-			copy.collection = cloneCollectionState(copy.collection)
-			copy.primitive = clonePrimitiveState(copy.primitive)
-			copy.clusters = nil
-			copy.positions = nil
-			copy.indexed = false
+			copy.Collection = cloneCollectionState(copy.Collection)
+			copy.Primitive = clonePrimitiveState(copy.Primitive)
+			copy.Clusters = nil
+			copy.Positions = nil
+			copy.Indexed = false
 			s = &copy
 		}
 		r.State[id] = s

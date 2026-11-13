@@ -77,7 +77,7 @@ func (r *Runtime) paintTableRow(screen tcell.Screen, n *Node, value any, header 
 				}
 			}
 		}
-		put(screen, drawX, y, text, cellStyle, intersect(clip, Rect{x, y, width, 1}))
+		put(screen, drawX, y, text, cellStyle, intersect(clip, Rect{X: x, Y: y, W: width, H: 1}))
 		x += width + 1
 	}
 }
@@ -211,7 +211,7 @@ func (r *Runtime) paintCollection(screen tcell.Screen, n *Node, st tcell.Style, 
 		if n.Type == "filepicker" && !collectionFileAllowed(n, it) {
 			style = style.Dim(true)
 		}
-		fill(screen, intersect(Rect{body.X, y, body.W, min(stride, body.Y+body.H-y)}, clip), style)
+		fill(screen, intersect(Rect{X: body.X, Y: y, W: body.W, H: min(stride, body.Y+body.H-y)}, clip), style)
 		if n.Type == "table" {
 			r.paintTableRow(screen, n, it.value, false, body.X, y, style, intersect(body, clip), c.X)
 			continue

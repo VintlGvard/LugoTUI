@@ -8,25 +8,14 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/VintlGvard/LugoTUI/internal/core"
 )
 
-type collectionState struct {
-	Query    string
-	Editing  bool
-	X        int
-	Expanded map[string]bool
-}
+type collectionState = core.CollectionState
 
 func cloneCollectionState(s *collectionState) *collectionState {
-	if s == nil {
-		return nil
-	}
-	c := *s
-	c.Expanded = map[string]bool{}
-	for k, v := range s.Expanded {
-		c.Expanded[k] = v
-	}
-	return &c
+	return core.CloneCollectionState(s)
 }
 
 func isCollection(n *Node) bool {
@@ -42,10 +31,10 @@ func (r *Runtime) collectionState(n *Node) (*WidgetState, *collectionState) {
 		s = &WidgetState{Anchor: -1}
 		r.State[n.ID] = s
 	}
-	if s.collection == nil {
-		s.collection = &collectionState{Query: str(n, "query", ""), Expanded: map[string]bool{}}
+	if s.Collection == nil {
+		s.Collection = &collectionState{Query: str(n, "query", ""), Expanded: map[string]bool{}}
 	}
-	return s, s.collection
+	return s, s.Collection
 }
 
 func collectionArray(v any) ([]any, bool) {

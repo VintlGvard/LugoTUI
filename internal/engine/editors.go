@@ -8,6 +8,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/VintlGvard/LugoTUI/internal/core"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -418,5 +419,5 @@ func editorIndex(n *Node, s *WidgetState, width int) ([]string, [][2]int) {
 		return s.EditorIndex(max(1, width), n.Type == "textarea")
 	}
 	g := editorGraphemes(n, s)
-	return g, editorPositions(g, max(1, width), n.Type == "textarea")
+	return g, core.EditorPositions(g, max(1, width), n.Type == "textarea")
 }
