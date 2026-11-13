@@ -52,8 +52,21 @@ func WithTheme(theme Theme) Option {
 
 func WithOnEvent(fn EventHandler) Option {
 	return func(o *Options) {
-		o.OnEvent = fn
 		o.AllowHostActions = true
+		if fn == nil {
+			return
+		}
+		prev := o.OnEvent
+		if prev == nil {
+			o.OnEvent = fn
+			return
+		}
+		o.OnEvent = func(r *Runtime, ev HostEvent) error {
+			if err := prev(r, ev); err != nil {
+				return err
+			}
+			return fn(r, ev)
+		}
 	}
 }
 
@@ -65,19 +78,23 @@ func WithAction(name string, fn ActionHandler) Option {
 }
 
 func WithHandlers(handlers map[string]ActionHandler) Option {
+	snapshot := make(map[string]ActionHandler, len(handlers))
+	for k, v := range handlers {
+		if v != nil {
+			snapshot[k] = v
+		}
+	}
 	return func(o *Options) {
 		if o.Actions == nil {
-			o.Actions = make(map[string]ActionHandler, len(handlers))
+			o.Actions = make(map[string]ActionHandler, len(snapshot))
 		}
-		for k, v := range handlers {
-			if v != nil {
-				o.Actions[k] = v
-			}
+		for k, v := range snapshot {
+			o.Actions[k] = v
 		}
 		o.AllowHostActions = true
 		prev := o.OnEvent
 		o.OnEvent = func(r *Runtime, ev HostEvent) error {
-			if h, ok := handlers[ev.Action]; ok && h != nil {
+			if h, ok := snapshot[ev.Action]; ok && h != nil {
 				if err := h(r, ev.Payload); err != nil {
 					return err
 				}

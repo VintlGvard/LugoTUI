@@ -339,3 +339,143 @@ return {
 		t.Fatalf("expected 'U' at (0,0) after diff draw, got %q", u0)
 	}
 }
+
+func TestWithHandlersIsolatesCallerMap(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatal(err)
+	}
+	sim.SetSize(40, 6)
+
+	const src = `
+local ui = require("ui")
+return {
+	view = ui.text{ id = "t", text = "ok" },
+	actions = {
+		trigger = function()
+			host.dispatch("ping", {})
+			host.dispatch("injected", {})
+		end,
+	},
+}
+`
+	var origCalls, mutatedCalls, injectedCalls atomic.Int32
+	handlers := map[string]tui.ActionHandler{
+		"ping": func(_ *tui.Runtime, _ any) error {
+			origCalls.Add(1)
+			return nil
+		},
+	}
+	ready := make(chan struct{})
+	opt := tui.WithHandlers(handlers)
+
+	handlers["ping"] = func(_ *tui.Runtime, _ any) error {
+		mutatedCalls.Add(1)
+		return nil
+	}
+	handlers["injected"] = func(_ *tui.Runtime, _ any) error {
+		injectedCalls.Add(1)
+		return nil
+	}
+
+	p := tui.NewProgram(
+		tui.WithSource(src),
+		tui.WithScreen(sim),
+		opt,
+		tui.WithMiddleware(func(next tui.EventHandler) tui.EventHandler {
+			return func(r *tui.Runtime, ev tui.HostEvent) error {
+				return next(r, ev)
+			}
+		}),
+		tui.WithOnReady(func(_ *tui.Runtime) { close(ready) }),
+	)
+
+	handlers["ping"] = func(_ *tui.Runtime, _ any) error {
+		mutatedCalls.Add(1)
+		return nil
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Run()
+	}()
+	<-ready
+
+	if err := p.Send("trigger", nil); err != nil {
+		t.Fatalf("p.Send failed: %v", err)
+	}
+	p.Quit()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("Program.Run failed: %v", err)
+	}
+	if origCalls.Load() != 1 || mutatedCalls.Load() != 0 || injectedCalls.Load() != 0 {
+		t.Fatalf("expected isolated handler snapshot (orig=1, mutated=0, injected=0), got orig=%d mutated=%d injected=%d",
+			origCalls.Load(), mutatedCalls.Load(), injectedCalls.Load())
+	}
+}
+
+func TestWithHandlersAndWithOnEventChainInAnyOrder(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatal(err)
+	}
+	sim.SetSize(40, 6)
+
+	const src = `
+local ui = require("ui")
+return {
+	view = ui.text{ id = "t", text = "ok" },
+	actions = {
+		trigger = function()
+			host.dispatch("ping", {})
+			host.dispatch("fallback", {})
+		end,
+	},
+}
+`
+	var pingCalls, fallbackCalls atomic.Int32
+	ready := make(chan struct{})
+
+	p := tui.NewProgram(
+		tui.WithSource(src),
+		tui.WithScreen(sim),
+		tui.WithHandlers(map[string]tui.ActionHandler{
+			"ping": func(_ *tui.Runtime, _ any) error {
+				pingCalls.Add(1)
+				return nil
+			},
+		}),
+		tui.WithOnEvent(func(_ *tui.Runtime, ev tui.HostEvent) error {
+			if ev.Action == "fallback" {
+				fallbackCalls.Add(1)
+			}
+			return nil
+		}),
+		tui.WithMiddleware(func(next tui.EventHandler) tui.EventHandler {
+			return func(r *tui.Runtime, ev tui.HostEvent) error {
+				return next(r, ev)
+			}
+		}),
+		tui.WithOnReady(func(_ *tui.Runtime) { close(ready) }),
+	)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Run()
+	}()
+	<-ready
+
+	if err := p.Send("trigger", nil); err != nil {
+		t.Fatalf("p.Send failed: %v", err)
+	}
+	p.Quit()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("Program.Run failed: %v", err)
+	}
+	if pingCalls.Load() != 1 || fallbackCalls.Load() != 1 {
+		t.Fatalf("expected both WithHandlers and WithOnEvent to run (ping=1, fallback=1), got ping=%d fallback=%d",
+			pingCalls.Load(), fallbackCalls.Load())
+	}
+}
