@@ -99,9 +99,7 @@ func place(n *Node, r, clip Rect) {
 		n.Rect.W = 0
 		n.Rect.H = 0
 		n.Clip = Rect{}
-		return
-	}
-	if len(n.Children) == 0 {
+		n.scrollExtent = 0
 		return
 	}
 	pad := int(num(n, "padding", 0))
@@ -109,11 +107,22 @@ func place(n *Node, r, clip Rect) {
 		pad++
 	}
 	inner := Rect{r.X + pad, r.Y + pad, max(0, r.W-2*pad), max(0, r.H-2*pad)}
+	if n.Type == "scroll" {
+		n.scrollExtent = inner.H
+	}
+	if len(n.Children) == 0 {
+		return
+	}
 	childClip := intersect(inner, n.Clip)
 	row := str(n, "direction", n.Type) == "row"
 	main, cross := inner.H, inner.W
 	if row {
 		main, cross = inner.W, inner.H
+	}
+	if n.Type == "scroll" && !row {
+		extent := max(inner.H, int(math.Ceil(measuredHeight(n, r.W)))-(r.H-inner.H))
+		n.scrollExtent = extent
+		main = extent
 	}
 	axis, caxis := "height", "width"
 	if row {

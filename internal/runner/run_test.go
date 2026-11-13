@@ -150,9 +150,13 @@ func TestSocketRedrawAndEvents(t *testing.T) {
 	request(`{"method":"message","action":"change"}`)
 	receive(t, s.shows)
 	request(`{"method":"message","action":"emit"}`)
-	receive(t, s.shows)
 	if reply := request(`{"method":"events"}`); !strings.Contains(reply, `"action":"start"`) {
 		t.Fatal(reply)
+	}
+	select {
+	case <-s.shows:
+		t.Fatal("unchanged frame after emit should skip Show")
+	default:
 	}
 }
 

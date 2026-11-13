@@ -26,12 +26,13 @@ type Node struct {
 	measuredWidth       int
 	measuredHeightCache float64
 	measuredValid       bool
+	scrollExtent        int
 	linesCacheText      string
 	linesCacheWidth     int
 	linesCacheLimit     int
 	linesCacheWrap      bool
 	linesCacheValid     bool
-	linesCache          []string
+	linesCache          []lineSpan
 	inlineActions       map[string]GoActionFunc
 	CustomPaint         func(c Canvas)
 	RawKey              func(e *tcell.EventKey) bool

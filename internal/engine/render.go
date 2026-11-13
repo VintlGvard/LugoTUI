@@ -3,7 +3,6 @@ package engine
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -47,11 +46,15 @@ type diffCell struct {
 
 type cellBuffer struct {
 	tcell.Screen
-	w, h       int
-	front      []diffCell
-	back       []diffCell
-	lastScreen tcell.Screen
-	forceAll   bool
+	w, h           int
+	front          []diffCell
+	back           []diffCell
+	lastScreen     tcell.Screen
+	forceAll       bool
+	hasCursorState bool
+	cursorVisible  bool
+	cursorX        int
+	cursorY        int
 }
 
 func (cb *cellBuffer) begin(s tcell.Screen, w, h int) {
@@ -80,6 +83,7 @@ func (cb *cellBuffer) begin(s tcell.Screen, w, h int) {
 			cb.back = cb.back[:size]
 		}
 		cb.forceAll = true
+		cb.hasCursorState = false
 		s.Clear()
 	} else {
 		cb.forceAll = false
@@ -104,12 +108,14 @@ func (cb *cellBuffer) SetContent(x, y int, mainc rune, combc []rune, style tcell
 	cb.putCell(x, y, mainc, comb, style)
 }
 
-func (cb *cellBuffer) flush(s tcell.Screen) {
+func (cb *cellBuffer) flush(s tcell.Screen) bool {
 	if cb.w <= 0 || cb.h <= 0 {
-		return
+		return cb.forceAll
 	}
+	changed := cb.forceAll
 	for i, c := range cb.back {
 		if cb.forceAll || c != cb.front[i] {
+			changed = true
 			cb.front[i] = c
 			x, y := i%cb.w, i/cb.w
 			var comb []rune
@@ -119,6 +125,7 @@ func (cb *cellBuffer) flush(s tcell.Screen) {
 			s.SetContent(x, y, c.mainc, comb, c.style)
 		}
 	}
+	return changed
 }
 
 func isASCII(s string) bool {
@@ -386,37 +393,7 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 	bindText(r.Root)
 	if textChanged || !r.layoutValid || r.lastLayoutW != w || r.lastLayoutH != h || r.lastLayoutRev != r.Revision || r.lastScrollDigest != sd {
 		Layout(r.Root, w, h)
-		var scrollLayout func(*Node)
-		scrollLayout = func(n *Node) {
-			if n.Type == "scroll" && r.State[n.ID] != nil {
-				cr := contentRect(n)
-				extent := max(cr.H, int(math.Ceil(measuredHeight(n, n.Rect.W)))-(n.Rect.H-cr.H))
-				viewport := n.Rect
-				viewport.H += extent - cr.H
-				place(n, viewport, n.Clip)
-				n.Rect.H -= extent - cr.H
-				content := contentRect(n)
-				viewportClip := intersect(content, n.Clip)
-				state := r.State[n.ID]
-				state.Scroll = max(0, min(state.Scroll, extent-cr.H))
-				var translate func(*Node, Rect)
-				translate = func(c *Node, parentClip Rect) {
-					c.Rect.Y -= state.Scroll
-					c.Clip = intersect(c.Rect, parentClip)
-					childClip := intersect(contentRect(c), c.Clip)
-					for _, ch := range c.Children {
-						translate(ch, childClip)
-					}
-				}
-				for _, c := range n.Children {
-					translate(c, viewportClip)
-				}
-			}
-			for _, c := range n.Children {
-				scrollLayout(c)
-			}
-		}
-		scrollLayout(r.Root)
+		r.applyScroll(r.Root)
 		r.layoutValid = true
 		r.lastLayoutW = w
 		r.lastLayoutH = h
@@ -429,8 +406,8 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 	}
 	r.cellBuf.begin(s, w, h)
 	target := tcell.Screen(r.cellBuf)
-	s.HideCursor()
-	cursorY := -1
+	cursorVisible := false
+	cursorX, cursorY := -1, -1
 	var paint func(*Node, tcell.Style)
 	paint = func(n *Node, bgStyle tcell.Style) {
 		if flag(n, "hidden") || n.Clip.W == 0 || n.Clip.H == 0 {
@@ -680,8 +657,8 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 						if mode != "hidden" && mode != "hide" {
 							p := r.primitive(n)
 							if mode != "blink" || !p.cursorBlinked {
-								s.ShowCursor(x, y)
-								cursorY = y
+								cursorVisible = true
+								cursorX, cursorY = x, y
 							}
 						}
 					}
@@ -698,11 +675,57 @@ func (r *Runtime) Draw(s tcell.Screen, diagnostic string) {
 		fill(target, Rect{0, h - 1, w, 1}, st)
 		put(target, 0, h-1, diagnostic, st, Rect{0, h - 1, w, 1})
 		if cursorY == h-1 {
-			s.HideCursor()
+			cursorVisible = false
+			cursorX, cursorY = -1, -1
 		}
 	}
-	r.cellBuf.flush(s)
-	s.Show()
+	cellsChanged := r.cellBuf.flush(s)
+	cursorChanged := !r.cellBuf.hasCursorState ||
+		r.cellBuf.cursorVisible != cursorVisible ||
+		(cursorVisible && (r.cellBuf.cursorX != cursorX || r.cellBuf.cursorY != cursorY))
+	if cursorChanged {
+		if cursorVisible {
+			s.ShowCursor(cursorX, cursorY)
+		} else {
+			s.HideCursor()
+		}
+		r.cellBuf.hasCursorState = true
+		r.cellBuf.cursorVisible = cursorVisible
+		r.cellBuf.cursorX = cursorX
+		r.cellBuf.cursorY = cursorY
+	}
+	if cellsChanged || cursorChanged {
+		s.Show()
+	}
+}
+
+func (r *Runtime) applyScroll(n *Node) {
+	if n == nil {
+		return
+	}
+	if n.Type == "scroll" && r.State[n.ID] != nil {
+		cr := contentRect(n)
+		state := r.State[n.ID]
+		state.Scroll = max(0, min(state.Scroll, max(0, n.scrollExtent-cr.H)))
+		if state.Scroll > 0 {
+			viewportClip := intersect(cr, n.Clip)
+			var translate func(*Node, Rect)
+			translate = func(c *Node, parentClip Rect) {
+				c.Rect.Y -= state.Scroll
+				c.Clip = intersect(c.Rect, parentClip)
+				childClip := intersect(contentRect(c), c.Clip)
+				for _, ch := range c.Children {
+					translate(ch, childClip)
+				}
+			}
+			for _, c := range n.Children {
+				translate(c, viewportClip)
+			}
+		}
+	}
+	for _, c := range n.Children {
+		r.applyScroll(c)
+	}
 }
 
 func plainText(n *Node) string {
@@ -718,11 +741,17 @@ func plainText(n *Node) string {
 	return str(n, "text", str(n, "title", ""))
 }
 
-func (n *Node) cachedLines(text string, width int, wrap bool, limit int) []string {
+type lineSpan struct {
+	text      string
+	startByte int
+	endByte   int
+}
+
+func (n *Node) cachedLineSpans(text string, width int, wrap bool, limit int) []lineSpan {
 	if n != nil && n.linesCacheValid && n.linesCacheText == text && n.linesCacheWidth == width && n.linesCacheWrap == wrap && n.linesCacheLimit == limit {
 		return n.linesCache
 	}
-	lines := LimitedLines(text, width, wrap, limit)
+	lines := limitedLineSpans(text, width, wrap, limit)
 	if n != nil {
 		n.linesCacheText = text
 		n.linesCacheWidth = width
@@ -760,23 +789,18 @@ func paintText(screen tcell.Screen, n *Node, text string, base tcell.Style, cr, 
 		}
 		text = plainText(n)
 	}
-	offset := 0
 	spanIndex := 0
-	for y, line := range n.cachedLines(text, cr.W, str(n, "wrap", "") != "none", max(0, clip.Y+clip.H-cr.Y)) {
+	for y, wl := range n.cachedLineSpans(text, cr.W, str(n, "wrap", "") != "none", max(0, clip.Y+clip.H-cr.Y)) {
 		if y >= cr.H {
 			break
 		}
 		if len(styles) == 0 {
-			put(screen, cr.X, cr.Y+y, line, base, clip)
+			put(screen, cr.X, cr.Y+y, wl.text, base, clip)
 			continue
 		}
-		start := strings.Index(text[offset:], line)
-		if start < 0 {
-			start = 0
-		}
-		offset += start
+		offset := wl.startByte
 		x := cr.X
-		g := uniseg.NewGraphemes(line)
+		g := uniseg.NewGraphemes(wl.text)
 		for g.Next() {
 			st := base
 			for spanIndex < len(ends) && offset >= ends[spanIndex] {
@@ -798,9 +822,6 @@ func paintText(screen tcell.Screen, n *Node, text string, base tcell.Style, cr, 
 			x += w
 			offset += len(g.Str())
 		}
-		if offset < len(text) && text[offset] == '\n' {
-			offset++
-		}
 	}
 }
 
@@ -816,11 +837,12 @@ func graphemes(s string) []string {
 	return out
 }
 
-func limitedLinesASCII(line string, width int, limit int, out []string) []string {
+func limitedLinesASCII(line string, lineStart, width, limit int, out []lineSpan) []lineSpan {
 	if len(line) == 0 {
-		return append(out, "")
+		return append(out, lineSpan{text: "", startByte: lineStart, endByte: lineStart})
 	}
 	buf := make([]byte, 0, width+16)
+	bufStart := lineStart
 	for i := 0; i < len(line); i++ {
 		if len(out) >= limit {
 			return out
@@ -829,7 +851,7 @@ func limitedLinesASCII(line string, width int, limit int, out []string) []string
 		if len(buf)+1 > width && len(buf) > 0 {
 			if b == ' ' || b == '\t' {
 				trimmed := bytes.TrimRight(buf, " \t")
-				out = append(out, string(trimmed))
+				out = append(out, lineSpan{text: string(trimmed), startByte: bufStart, endByte: bufStart + len(trimmed)})
 				buf = buf[:0]
 				for i+1 < len(line) && (line[i+1] == ' ' || line[i+1] == '\t') {
 					i++
@@ -842,50 +864,85 @@ func limitedLinesASCII(line string, width int, limit int, out []string) []string
 			cut := bytes.LastIndexAny(buf, " \t")
 			trimmed := bytes.TrimRight(buf[:max(0, cut)], " \t")
 			if cut > 0 && len(trimmed) > 0 {
-				out = append(out, string(trimmed))
+				out = append(out, lineSpan{text: string(trimmed), startByte: bufStart, endByte: bufStart + len(trimmed)})
 				rem := bytes.TrimLeft(buf[cut+1:], " \t")
+				remStart := bufStart + len(buf) - len(rem)
 				buf = append(buf[:0], rem...)
+				bufStart = remStart
 				if len(buf)+1 > width && len(buf) > 0 {
 					if len(out) >= limit {
 						return out
 					}
-					out = append(out, string(buf))
+					out = append(out, lineSpan{text: string(buf), startByte: bufStart, endByte: bufStart + len(buf)})
 					buf = buf[:0]
 				}
 			} else {
-				out = append(out, string(buf))
+				out = append(out, lineSpan{text: string(buf), startByte: bufStart, endByte: bufStart + len(buf)})
 				buf = buf[:0]
 			}
 			if (b == ' ' || b == '\t') && len(buf) == 0 {
 				continue
 			}
 		}
+		if len(buf) == 0 {
+			bufStart = lineStart + i
+		}
 		buf = append(buf, b)
 	}
 	if len(out) >= limit {
 		return out
 	}
-	return append(out, string(buf))
+	if len(buf) == 0 {
+		end := lineStart + len(line)
+		return append(out, lineSpan{text: "", startByte: end, endByte: end})
+	}
+	return append(out, lineSpan{text: string(buf), startByte: bufStart, endByte: bufStart + len(buf)})
 }
 
 func Lines(text string, width int, wrap bool) []string {
 	return LimitedLines(text, width, wrap, int(^uint(0)>>1))
 }
+
 func LimitedLines(text string, width int, wrap bool, limit int) []string {
-	out := []string{}
-	for line := range strings.SplitSeq(text, "\n") {
+	spans := limitedLineSpans(text, width, wrap, limit)
+	out := make([]string, len(spans))
+	for i, s := range spans {
+		out[i] = s.text
+	}
+	return out
+}
+
+func limitedLineSpans(text string, width int, wrap bool, limit int) []lineSpan {
+	out := []lineSpan{}
+	for lineStart := 0; ; {
+		nl := strings.IndexByte(text[lineStart:], '\n')
+		lineEnd := len(text)
+		if nl >= 0 {
+			lineEnd = lineStart + nl
+		}
+		line := text[lineStart:lineEnd]
 		if len(out) >= limit {
 			return out
 		}
 		if !wrap || width <= 0 {
-			out = append(out, line)
+			out = append(out, lineSpan{text: line, startByte: lineStart, endByte: lineEnd})
+			if nl < 0 {
+				break
+			}
+			lineStart = lineEnd + 1
 			continue
 		}
 		if isASCII(line) {
-			out = limitedLinesASCII(line, width, limit, out)
+			out = limitedLinesASCII(line, lineStart, width, limit, out)
+			if nl < 0 {
+				break
+			}
+			lineStart = lineEnd + 1
 			continue
 		}
 		current := ""
+		curStart := lineStart
+		bytePos := lineStart
 		w := 0
 		wrappedOnSpace := false
 		iterator := uniseg.NewGraphemes(line)
@@ -894,6 +951,8 @@ func LimitedLines(text string, width int, wrap bool, limit int) []string {
 				return out
 			}
 			g := iterator.Str()
+			pos := bytePos
+			bytePos += len(g)
 			gw := iterator.Width()
 			if wrappedOnSpace {
 				if strings.TrimSpace(g) == "" {
@@ -903,7 +962,8 @@ func LimitedLines(text string, width int, wrap bool, limit int) []string {
 			}
 			if w+gw > width && current != "" {
 				if strings.TrimSpace(g) == "" {
-					out = append(out, strings.TrimRight(current, " \t"))
+					trimmed := strings.TrimRight(current, " \t")
+					out = append(out, lineSpan{text: trimmed, startByte: curStart, endByte: curStart + len(trimmed)})
 					current = ""
 					w = 0
 					wrappedOnSpace = true
@@ -912,25 +972,30 @@ func LimitedLines(text string, width int, wrap bool, limit int) []string {
 				cut := strings.LastIndexAny(current, " \t")
 				trimmed := strings.TrimRight(current[:max(0, cut)], " \t")
 				if cut > 0 && len(trimmed) > 0 {
-					out = append(out, trimmed)
-					current = strings.TrimLeft(current[cut+1:], " \t")
+					out = append(out, lineSpan{text: trimmed, startByte: curStart, endByte: curStart + len(trimmed)})
+					rem := strings.TrimLeft(current[cut+1:], " \t")
+					curStart = curStart + len(current) - len(rem)
+					current = rem
 					w = textWidth(current)
 					if w+gw > width && current != "" {
 						if len(out) >= limit {
 							return out
 						}
-						out = append(out, current)
+						out = append(out, lineSpan{text: current, startByte: curStart, endByte: curStart + len(current)})
 						current = ""
 						w = 0
 					}
 				} else {
-					out = append(out, current)
+					out = append(out, lineSpan{text: current, startByte: curStart, endByte: curStart + len(current)})
 					current = ""
 					w = 0
 				}
 				if strings.TrimSpace(g) == "" && current == "" {
 					continue
 				}
+			}
+			if current == "" {
+				curStart = pos
 			}
 			current += g
 			w += gw
@@ -939,8 +1004,15 @@ func LimitedLines(text string, width int, wrap bool, limit int) []string {
 			return out
 		}
 		if !wrappedOnSpace || current != "" || len(line) == 0 {
-			out = append(out, current)
+			if current == "" {
+				curStart = lineEnd
+			}
+			out = append(out, lineSpan{text: current, startByte: curStart, endByte: curStart + len(current)})
 		}
+		if nl < 0 {
+			break
+		}
+		lineStart = lineEnd + 1
 	}
 	return out
 }
