@@ -139,7 +139,7 @@ Or download pre-built binaries from [Releases](https://github.com/VintlGvard/Lug
 ```sh
 make run      # Run the demo app
 make test     # Run test suite with race detector
-make cover    # Run tests with coverage gate (>=80%)
+make cover    # Run race-enabled coverage report
 make check    # Headless parse/layout/render validation
 ```
 
