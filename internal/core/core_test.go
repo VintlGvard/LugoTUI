@@ -373,3 +373,198 @@ func TestValidateTreePropsAndNodeBuilders(t *testing.T) {
 		}
 	}
 }
+
+func TestPropSidesExtendedAndNil(t *testing.T) {
+	if got := PropSides(nil, "padding"); got != (Sides{}) {
+		t.Fatalf("nil node sides = %+v", got)
+	}
+	n := &Node{
+		Type: "box",
+		Props: map[string]any{
+			"p_f64":   []float64{1, 2, 3},
+			"p_empty": []int{},
+		},
+	}
+	if got := PropSides(n, "p_f64"); got != (Sides{Top: 1, Right: 2, Bottom: 3, Left: 2}) {
+		t.Fatalf("[]float64 3-elem sides = %+v", got)
+	}
+	if got := PropSides(n, "p_empty"); got != (Sides{}) {
+		t.Fatalf("empty sides = %+v", got)
+	}
+}
+
+func TestEstimateBytesAndValidateModelExtended(t *testing.T) {
+	n, err := EstimateBytes(map[string]any{
+		"f32":    float32(1.5),
+		"glyphs": SingleBorder,
+		"empty":  []string(nil),
+	})
+	if err != nil || n <= 0 {
+		t.Fatalf("EstimateBytes failed: n=%d err=%v", n, err)
+	}
+	if _, err := EstimateBytes(float32(math.NaN())); err == nil {
+		t.Fatal("expected NaN float32 error")
+	}
+
+	hugeSlice := make([]string, 2048)
+	for i := range hugeSlice {
+		hugeSlice[i] = strings.Repeat("a", 1024)
+	}
+	if err := ValidateModel(map[string]any{"big": hugeSlice}); err == nil {
+		t.Fatal("expected ValidateModel error for >1MiB []string")
+	}
+
+	manyKeys := make(map[string]any, MaxModelKeys+1)
+	for i := range MaxModelKeys + 1 {
+		manyKeys[string(rune('a'+i%26))+strings.Repeat("x", 4)+json.Number(string(rune('0'+i%10))).String()+string(rune(i))] = i
+	}
+	if len(manyKeys) > MaxModelKeys {
+		if err := ValidateModel(manyKeys); err == nil {
+			t.Fatal("expected ValidateModel error for >1024 keys")
+		}
+	}
+}
+
+func TestNodeBuildersExtended(t *testing.T) {
+	n := (&Node{Type: "box"}).
+		Bind("m.val").
+		Source("m.items").
+		Textf("hi %d", 1).
+		Title("hdr").
+		Placeholder("ph").
+		Width(20).
+		Height(10).
+		Size(20, 10).
+		MinWidth(2).
+		MaxWidth(20).
+		MinHeight(1).
+		MaxHeight(10).
+		Grow(1).
+		Shrink(1).
+		Flex(2).
+		Padding(1).
+		Margin(1).
+		Gap(1).
+		Border("rounded").
+		BorderStyle("double").
+		BorderFG("#fff").
+		BorderBG("#000").
+		BorderColor("#fff", "#000").
+		BorderGlyphs(RoundedBorder).
+		TitleFG("#aaa").
+		ButtonStyle("filled").
+		Plain().
+		Filled().
+		Chevrons().
+		Parens().
+		CursorPrefix("> ").
+		Focusable(true).
+		FG("#111").
+		BG("#222").
+		Color("#111", "#222").
+		Bold(true).
+		Align("center").
+		Justify("between").
+		Hidden(false).
+		Disabled(true).
+		Modal(true).
+		Backdrop("dim").
+		CloseOnEsc(true).
+		ZIndex(3).
+		Top(1).
+		Right(2).
+		Bottom(3).
+		Left(4).
+		Wrap(true).
+		WrapMode("word").
+		Absolute(1, 2).
+		Inset(1, 2, 3, 4).
+		Echo("password").
+		Masked(true).
+		CharLimit(32).
+		MaxLength(64).
+		ValidationPattern("^[a-z]+$").
+		MultiSelect(true).
+		ItemHeight(2).
+		ShowIcons(true).
+		ShowHidden(false).
+		CurrentDir("/tmp").
+		NavUp("u").
+		NavDown("d").
+		NavLeft("l").
+		NavRight("r").
+		Nav("u", "d", "l", "r").
+		OnClick("act").
+		OnChange("chg").
+		OnSubmit("sub").
+		OnSelect("sel").
+		OnNavigate("nav").
+		OnTimeout("to").
+		OnKey("k").
+		OnChangeText(func(string) {}).
+		OnSubmitText(func(string) {}).
+		OnSelectItem(func(int, any) {}).
+		OnTimeoutDo(func() {}).
+		Key("q", "quit").
+		Keymap(map[string]string{"x": "y"}).
+		Selected(1).
+		Running(true).
+		Percent(0.5).
+		ShowPercentage(true).
+		ShowHeader(true).
+		ShowLineNumbers(true).
+		SoftWrap(true).
+		Mode("spinner").
+		Preset("dots").
+		Duration(250).
+		Interval(100)
+
+	if len(n.Props) == 0 {
+		t.Fatal("expected populated props")
+	}
+	if _, ok := n.Props["timer_id"]; !ok {
+		_ = n
+	}
+	_ = time.Millisecond
+}
+
+func BenchmarkEstimateBytes(b *testing.B) {
+	data := map[string]any{
+		"title": "Dashboard",
+		"items": []string{"alpha", "beta", "gamma", "delta"},
+		"meta":  map[string]any{"page": 1, "ok": true, "ratio": 0.75},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := EstimateBytes(data); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkValidateModelLargeReject(b *testing.B) {
+	big := make([]string, 4096)
+	for i := range big {
+		big[i] = strings.Repeat("x", 1024)
+	}
+	data := map[string]any{"big": big}
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := ValidateModel(data); err == nil {
+			b.Fatal("expected size limit error")
+		}
+	}
+}
+
+func BenchmarkPropSides(b *testing.B) {
+	n := &Node{
+		Type: "box",
+		Props: map[string]any{
+			"padding": []int{1, 2, 3, 4},
+		},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = PropSides(n, "padding")
+	}
+}

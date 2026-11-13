@@ -1,7 +1,6 @@
 package text
 
 import (
-	"bytes"
 	"strings"
 
 	"github.com/rivo/uniseg"
@@ -30,8 +29,18 @@ func TextWidth(s string) int {
 }
 
 func Graphemes(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	if IsASCII(s) {
+		out := make([]string, len(s))
+		for i := 0; i < len(s); i++ {
+			out[i] = s[i : i+1]
+		}
+		return out
+	}
 	g := uniseg.NewGraphemes(s)
-	out := []string{}
+	out := make([]string, 0, len(s)/2+1)
 	for g.Next() {
 		out = append(out, g.Str())
 	}
@@ -106,8 +115,7 @@ func WrapLines(text string, width int, wrap bool, limit int) []WrappedLine {
 			lineStart = lineEnd + 1
 			continue
 		}
-		current := ""
-		curStart := lineStart
+		curStart, curEnd := lineStart, lineStart
 		bytePos := lineStart
 		w := 0
 		wrappedOnSpace := false
@@ -126,11 +134,12 @@ func WrapLines(text string, width int, wrap bool, limit int) []WrappedLine {
 				}
 				wrappedOnSpace = false
 			}
-			if w+gw > width && current != "" {
+			if w+gw > width && curStart < curEnd {
+				current := text[curStart:curEnd]
 				if strings.TrimSpace(g) == "" {
 					trimmed := strings.TrimRight(current, " \t")
 					out = append(out, WrappedLine{Text: trimmed, StartByte: curStart, EndByte: curStart + len(trimmed)})
-					current = ""
+					curStart, curEnd = 0, 0
 					w = 0
 					wrappedOnSpace = true
 					continue
@@ -141,39 +150,38 @@ func WrapLines(text string, width int, wrap bool, limit int) []WrappedLine {
 					out = append(out, WrappedLine{Text: trimmed, StartByte: curStart, EndByte: curStart + len(trimmed)})
 					rem := strings.TrimLeft(current[cut+1:], " \t")
 					curStart = curStart + len(current) - len(rem)
-					current = rem
-					w = TextWidth(current)
-					if w+gw > width && current != "" {
+					w = TextWidth(rem)
+					if w+gw > width && curStart < curEnd {
 						if len(out) >= limit {
 							return out
 						}
-						out = append(out, WrappedLine{Text: current, StartByte: curStart, EndByte: curStart + len(current)})
-						current = ""
+						out = append(out, WrappedLine{Text: text[curStart:curEnd], StartByte: curStart, EndByte: curEnd})
+						curStart, curEnd = 0, 0
 						w = 0
 					}
 				} else {
-					out = append(out, WrappedLine{Text: current, StartByte: curStart, EndByte: curStart + len(current)})
-					current = ""
+					out = append(out, WrappedLine{Text: current, StartByte: curStart, EndByte: curEnd})
+					curStart, curEnd = 0, 0
 					w = 0
 				}
-				if strings.TrimSpace(g) == "" && current == "" {
+				if strings.TrimSpace(g) == "" && curStart == curEnd {
 					continue
 				}
 			}
-			if current == "" {
+			if curStart == curEnd {
 				curStart = pos
 			}
-			current += g
+			curEnd = bytePos
 			w += gw
 		}
 		if len(out) >= limit {
 			return out
 		}
-		if !wrappedOnSpace || current != "" || len(line) == 0 {
-			if current == "" {
-				curStart = lineEnd
+		if !wrappedOnSpace || curStart < curEnd || len(line) == 0 {
+			if curStart == curEnd {
+				curStart, curEnd = lineEnd, lineEnd
 			}
-			out = append(out, WrappedLine{Text: current, StartByte: curStart, EndByte: curStart + len(current)})
+			out = append(out, WrappedLine{Text: text[curStart:curEnd], StartByte: curStart, EndByte: curEnd})
 		}
 		if nl < 0 {
 			break
@@ -183,22 +191,35 @@ func WrapLines(text string, width int, wrap bool, limit int) []WrappedLine {
 	return out
 }
 
+func trimRightSpaces(s string, start, end int) int {
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return end
+}
+
+func trimLeftSpaces(s string, start, end int) int {
+	for start < end && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	return start
+}
+
 func wrapASCII(line string, lineStart, width, limit int, out []WrappedLine) []WrappedLine {
 	if len(line) == 0 {
 		return append(out, WrappedLine{Text: "", StartByte: lineStart, EndByte: lineStart})
 	}
-	buf := make([]byte, 0, width+16)
-	bufStart := lineStart
+	start, end := 0, 0
 	for i := 0; i < len(line); i++ {
 		if len(out) >= limit {
 			return out
 		}
 		b := line[i]
-		if len(buf)+1 > width && len(buf) > 0 {
+		if end-start+1 > width && end > start {
 			if b == ' ' || b == '\t' {
-				trimmed := bytes.TrimRight(buf, " \t")
-				out = append(out, WrappedLine{Text: string(trimmed), StartByte: bufStart, EndByte: bufStart + len(trimmed)})
-				buf = buf[:0]
+				trimEnd := trimRightSpaces(line, start, end)
+				out = append(out, WrappedLine{Text: line[start:trimEnd], StartByte: lineStart + start, EndByte: lineStart + trimEnd})
+				start, end = 0, 0
 				for i+1 < len(line) && (line[i+1] == ' ' || line[i+1] == '\t') {
 					i++
 				}
@@ -207,40 +228,40 @@ func wrapASCII(line string, lineStart, width, limit int, out []WrappedLine) []Wr
 				}
 				continue
 			}
-			cut := bytes.LastIndexAny(buf, " \t")
-			trimmed := bytes.TrimRight(buf[:max(0, cut)], " \t")
-			if cut > 0 && len(trimmed) > 0 {
-				out = append(out, WrappedLine{Text: string(trimmed), StartByte: bufStart, EndByte: bufStart + len(trimmed)})
-				rem := bytes.TrimLeft(buf[cut+1:], " \t")
-				remStart := bufStart + len(buf) - len(rem)
-				buf = append(buf[:0], rem...)
-				bufStart = remStart
-				if len(buf)+1 > width && len(buf) > 0 {
+			cut := strings.LastIndexAny(line[start:end], " \t")
+			trimEnd := start
+			if cut > 0 {
+				trimEnd = trimRightSpaces(line, start, start+cut)
+			}
+			if cut > 0 && trimEnd > start {
+				out = append(out, WrappedLine{Text: line[start:trimEnd], StartByte: lineStart + start, EndByte: lineStart + trimEnd})
+				start = trimLeftSpaces(line, start+cut+1, end)
+				if end-start+1 > width && end > start {
 					if len(out) >= limit {
 						return out
 					}
-					out = append(out, WrappedLine{Text: string(buf), StartByte: bufStart, EndByte: bufStart + len(buf)})
-					buf = buf[:0]
+					out = append(out, WrappedLine{Text: line[start:end], StartByte: lineStart + start, EndByte: lineStart + end})
+					start, end = 0, 0
 				}
 			} else {
-				out = append(out, WrappedLine{Text: string(buf), StartByte: bufStart, EndByte: bufStart + len(buf)})
-				buf = buf[:0]
+				out = append(out, WrappedLine{Text: line[start:end], StartByte: lineStart + start, EndByte: lineStart + end})
+				start, end = 0, 0
 			}
-			if (b == ' ' || b == '\t') && len(buf) == 0 {
+			if (b == ' ' || b == '\t') && start == end {
 				continue
 			}
 		}
-		if len(buf) == 0 {
-			bufStart = lineStart + i
+		if start == end {
+			start = i
 		}
-		buf = append(buf, b)
+		end = i + 1
 	}
 	if len(out) >= limit {
 		return out
 	}
-	if len(buf) == 0 {
-		end := lineStart + len(line)
-		return append(out, WrappedLine{Text: "", StartByte: end, EndByte: end})
+	if start == end {
+		endPos := lineStart + len(line)
+		return append(out, WrappedLine{Text: "", StartByte: endPos, EndByte: endPos})
 	}
-	return append(out, WrappedLine{Text: string(buf), StartByte: bufStart, EndByte: bufStart + len(buf)})
+	return append(out, WrappedLine{Text: line[start:end], StartByte: lineStart + start, EndByte: lineStart + end})
 }

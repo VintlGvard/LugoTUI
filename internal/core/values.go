@@ -105,40 +105,45 @@ func estimateIntBytes(v int64) int {
 	return n
 }
 
-func estimateBytes(v any, depth int) (int, error) {
+var errModelTooLarge = errors.New("model exceeds 1 MiB")
+
+func estimateBytes(v any, depth, limit int) (int, error) {
 	if depth > MaxDepth {
 		return 0, errors.New("value nesting exceeds 64")
 	}
+	var size int
 	switch x := v.(type) {
 	case nil:
-		return 4, nil
+		size = 4
 	case bool:
 		if x {
-			return 4, nil
+			size = 4
+		} else {
+			size = 5
 		}
-		return 5, nil
 	case int:
-		return estimateIntBytes(int64(x)), nil
+		size = estimateIntBytes(int64(x))
 	case int64:
-		return estimateIntBytes(x), nil
+		size = estimateIntBytes(x)
 	case float64:
 		if !Finite(x) {
 			return 0, errors.New("unsupported non-finite float")
 		}
 		var buf [32]byte
-		return len(strconv.AppendFloat(buf[:0], x, 'g', -1, 64)), nil
+		size = len(strconv.AppendFloat(buf[:0], x, 'g', -1, 64))
 	case float32:
 		f := float64(x)
 		if !Finite(f) {
 			return 0, errors.New("unsupported non-finite float")
 		}
 		var buf [32]byte
-		return len(strconv.AppendFloat(buf[:0], f, 'g', -1, 32)), nil
+		size = len(strconv.AppendFloat(buf[:0], f, 'g', -1, 32))
 	case string:
-		return estimateStringBytes(x), nil
+		size = estimateStringBytes(x)
 	case []string:
 		if x == nil {
-			return 4, nil
+			size = 4
+			break
 		}
 		total := 2
 		for i, s := range x {
@@ -146,27 +151,42 @@ func estimateBytes(v any, depth int) (int, error) {
 				total++
 			}
 			total += estimateStringBytes(s)
+			if limit > 0 && total > limit {
+				return 0, errModelTooLarge
+			}
 		}
-		return total, nil
+		size = total
 	case []any:
 		if x == nil {
-			return 4, nil
+			size = 4
+			break
 		}
 		total := 2
 		for i, item := range x {
 			if i > 0 {
 				total++
 			}
-			n, err := estimateBytes(item, depth+1)
+			subLimit := 0
+			if limit > 0 {
+				subLimit = limit - total
+				if subLimit <= 0 {
+					return 0, errModelTooLarge
+				}
+			}
+			n, err := estimateBytes(item, depth+1, subLimit)
 			if err != nil {
 				return 0, err
 			}
 			total += n
+			if limit > 0 && total > limit {
+				return 0, errModelTooLarge
+			}
 		}
-		return total, nil
+		size = total
 	case map[string]any:
 		if x == nil {
-			return 4, nil
+			size = 4
+			break
 		}
 		total := 2
 		first := true
@@ -175,38 +195,47 @@ func estimateBytes(v any, depth int) (int, error) {
 				total++
 			}
 			first = false
-			vn, err := estimateBytes(item, depth+1)
+			total += estimateStringBytes(k) + 1
+			subLimit := 0
+			if limit > 0 {
+				subLimit = limit - total
+				if subLimit <= 0 {
+					return 0, errModelTooLarge
+				}
+			}
+			vn, err := estimateBytes(item, depth+1, subLimit)
 			if err != nil {
 				return 0, err
 			}
-			total += estimateStringBytes(k) + 1 + vn
+			total += vn
+			if limit > 0 && total > limit {
+				return 0, errModelTooLarge
+			}
 		}
-		return total, nil
+		size = total
 	default:
 		b, err := json.Marshal(v)
 		if err != nil {
 			return 0, err
 		}
-		return len(b), nil
+		size = len(b)
 	}
+	if limit > 0 && size > limit {
+		return 0, errModelTooLarge
+	}
+	return size, nil
 }
 
 func EstimateBytes(v any) (int, error) {
-	return estimateBytes(v, 0)
+	return estimateBytes(v, 0, 0)
 }
 
 func ValidateModel(data map[string]any) error {
 	if len(data) > MaxModelKeys {
 		return errors.New("model exceeds 1024 keys")
 	}
-	n, err := EstimateBytes(data)
-	if err != nil {
-		return err
-	}
-	if n > MaxText {
-		return errors.New("model exceeds 1 MiB")
-	}
-	return nil
+	_, err := estimateBytes(data, 0, MaxText)
+	return err
 }
 
 func cloneValue(v any, depth int) (any, error) {
@@ -304,11 +333,9 @@ func PropSides(n *Node, base string) Sides {
 			sides.Left = v
 		}
 	case []int:
-		vals := make([]any, len(raw))
-		for i, x := range raw {
-			vals[i] = x
-		}
-		sides = sidesFromSlice(vals)
+		sides = sidesFromSlice(raw)
+	case []float64:
+		sides = sidesFromSlice(raw)
 	case []any:
 		sides = sidesFromSlice(raw)
 	default:
@@ -316,12 +343,12 @@ func PropSides(n *Node, base string) Sides {
 			sides = Sides{Top: v, Right: v, Bottom: v, Left: v}
 		}
 	}
-	for _, k := range []string{base + "_x", base + "_horizontal"} {
+	for _, k := range [2]string{base + "_x", base + "_horizontal"} {
 		if v, ok := nonNegInt(n.Props[k]); ok {
 			sides.Left, sides.Right = v, v
 		}
 	}
-	for _, k := range []string{base + "_y", base + "_vertical"} {
+	for _, k := range [2]string{base + "_y", base + "_vertical"} {
 		if v, ok := nonNegInt(n.Props[k]); ok {
 			sides.Top, sides.Bottom = v, v
 		}
@@ -341,7 +368,7 @@ func PropSides(n *Node, base string) Sides {
 	return sides
 }
 
-func sidesFromSlice(vals []any) Sides {
+func sidesFromSlice[T any](vals []T) Sides {
 	get := func(i int) int {
 		if i >= len(vals) {
 			return 0

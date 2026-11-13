@@ -250,17 +250,13 @@ func borderGlyphsFor(n *Node) (bool, BorderGlyphs) {
 	if bg, ok := n.Props["border_glyphs"].(BorderGlyphs); ok {
 		return true, bg
 	}
+	if !core.NodeBorderSides(n).Any() {
+		return false, BorderGlyphs{}
+	}
 	bVal := n.Props["border"]
 	styleName := str(n, "border_style", "")
 	if s, ok := bVal.(string); ok && s != "" && s != "false" {
 		styleName = s
-	}
-	hasBorder := flag(n, "border") || n.Type == "panel"
-	if s, ok := bVal.(string); ok && s != "" && s != "none" && s != "false" {
-		hasBorder = true
-	}
-	if !hasBorder || styleName == "none" {
-		return false, BorderGlyphs{}
 	}
 	switch strings.ToLower(styleName) {
 	case "rounded":

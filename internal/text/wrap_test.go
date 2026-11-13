@@ -2,6 +2,7 @@ package text
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +129,21 @@ func TestLinesLimitedLinesAndWrapLinesOffsets(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func BenchmarkWrapLinesASCII(b *testing.B) {
+	src := strings.Repeat("The quick brown fox jumps over the lazy dog. ", 10)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = WrapLines(src, 40, true, 64)
+	}
+}
+
+func BenchmarkWrapLinesUnicode(b *testing.B) {
+	src := strings.Repeat("Привет мир 👩‍💻界 тест переноса строк. ", 10)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = WrapLines(src, 24, true, 64)
 	}
 }
