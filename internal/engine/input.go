@@ -413,14 +413,7 @@ func (r *Runtime) bubbleAncestorKey(scope, target *Node, e *tcell.EventKey) erro
 	return nil
 }
 
-func (r *Runtime) Key(e *tcell.EventKey) error {
-	r.ReconcileFocus()
-	scope := r.scope()
-	if e.Key() == tcell.KeyEscape && scope != r.Root {
-		r.Staged = []Operation{{ID: scope.ID, Props: map[string]any{"hidden": true}}}
-		return r.Commit()
-	}
-	var action string
+func (r *Runtime) scopeKeymapAction(scope *Node, e *tcell.EventKey) string {
 	if scope == r.Root {
 		combined := make(map[string]string, len(r.keymap))
 		for k, v := range r.keymap {
@@ -435,32 +428,218 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 				}
 			}
 		}
-		keys := make([]string, 0, len(combined))
-		for k := range combined {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, pattern := range keys {
-			if act := combined[pattern]; act != "" && keyMatches(pattern, e) {
-				action = act
-				break
-			}
-		}
-	} else if scopeKm, ok := scope.Props["keymap"].(map[string]any); ok {
-		keys := make([]string, 0, len(scopeKm))
-		for k := range scopeKm {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, pattern := range keys {
-			if s, ok := scopeKm[pattern].(string); ok && s != "" && keyMatches(pattern, e) {
-				action = s
-				break
-			}
+		return matchKeymapString(combined, e)
+	}
+	if scopeKm, ok := scope.Props["keymap"].(map[string]any); ok {
+		return matchKeymapAny(scopeKm, e)
+	}
+	return ""
+}
+
+func matchKeymapString(km map[string]string, e *tcell.EventKey) string {
+	if len(km) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(km))
+	for k := range km {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, pattern := range keys {
+		if act := km[pattern]; act != "" && keyMatches(pattern, e) {
+			return act
 		}
 	}
-	if action != "" {
-		return r.Action(action, map[string]any{"key": e.Name(), "focus": r.Focus})
+	return ""
+}
+
+func matchKeymapAny(km map[string]any, e *tcell.EventKey) string {
+	if len(km) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(km))
+	for k := range km {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, pattern := range keys {
+		if s, ok := km[pattern].(string); ok && s != "" && keyMatches(pattern, e) {
+			return s
+		}
+	}
+	return ""
+}
+
+func eventArrowDir(e *tcell.EventKey) string {
+	switch e.Key() {
+	case tcell.KeyUp:
+		return "up"
+	case tcell.KeyDown:
+		return "down"
+	case tcell.KeyLeft:
+		return "left"
+	case tcell.KeyRight:
+		return "right"
+	default:
+		return ""
+	}
+}
+
+func (r *Runtime) isCollectionEditing(n *Node) bool {
+	if n == nil || !isCollection(n) {
+		return false
+	}
+	s := r.State[n.ID]
+	return s != nil && s.Collection != nil && s.Collection.Editing
+}
+
+func (r *Runtime) editorWantsArrow(n *Node, dir string) bool {
+	if target, disabled := explicitNavTarget(n, dir); target != "" || disabled {
+		return false
+	}
+	if n.Type == "input" && (dir == "up" || dir == "down") && (flag(n, "spatial_nav") || r.spatialNav) {
+		return false
+	}
+	return true
+}
+
+func (r *Runtime) handleEditorControlKey(n *Node, e *tcell.EventKey) (bool, error) {
+	if n == nil || flag(n, "disabled") || (n.Type != "input" && n.Type != "textarea") {
+		return false, nil
+	}
+	if dir := eventArrowDir(e); dir != "" && !r.editorWantsArrow(n, dir) {
+		return false, nil
+	}
+	s := r.State[n.ID]
+	if s == nil {
+		return false, nil
+	}
+	g := graphemes(s.Value)
+	s.Cursor = max(0, min(s.Cursor, len(g)))
+	old := s.Cursor
+	shift := e.Modifiers()&tcell.ModShift != 0
+	switch e.Key() {
+	case tcell.KeyLeft:
+		s.Cursor = max(0, s.Cursor-1)
+	case tcell.KeyRight:
+		s.Cursor = min(len(g), s.Cursor+1)
+	case tcell.KeyHome:
+		s.Cursor = 0
+		if n.Type == "textarea" {
+			s.Cursor = old
+			for s.Cursor > 0 && g[s.Cursor-1] != "\n" {
+				s.Cursor--
+			}
+		}
+	case tcell.KeyEnd:
+		s.Cursor = len(g)
+		if n.Type == "textarea" {
+			s.Cursor = old
+			for s.Cursor < len(g) && g[s.Cursor] != "\n" {
+				s.Cursor++
+			}
+		}
+	case tcell.KeyUp, tcell.KeyDown:
+		step := -1
+		if e.Key() == tcell.KeyDown {
+			step = 1
+		}
+		_, positions := editorIndex(n, s, editorRect(n, s).W)
+		p := positions[old]
+		s.Cursor = nearestPosition(positions, p[0], max(0, p[1]+step))
+	case tcell.KeyCtrlA:
+		s.Anchor = 0
+		s.Cursor = len(g)
+		return true, nil
+	case tcell.KeyCtrlC:
+		selected := s.Value
+		if s.Anchor >= 0 && s.Anchor != s.Cursor {
+			a, b := max(0, min(s.Anchor, s.Cursor)), min(len(g), max(s.Anchor, s.Cursor))
+			selected = strings.Join(g[a:b], "")
+		}
+		return true, r.ClipboardAdapter().Write(selected)
+	case tcell.KeyCtrlX:
+		if s.Anchor >= 0 && s.Anchor != s.Cursor {
+			a, b := max(0, min(s.Anchor, s.Cursor)), min(len(g), max(s.Anchor, s.Cursor))
+			if err := r.ClipboardAdapter().Write(strings.Join(g[a:b], "")); err != nil {
+				return true, err
+			}
+			editSave(s)
+			replaceSelection(s, "")
+			return true, r.changed(n, s)
+		}
+		return true, nil
+	case tcell.KeyCtrlV:
+		text, err := r.ClipboardAdapter().Read()
+		if err != nil || text == "" {
+			return true, err
+		}
+		return true, r.Paste(text)
+	case tcell.KeyCtrlZ:
+		if len(s.Undo) > 0 {
+			s.Redo = append(s.Redo, s.Value)
+			s.Value = s.Undo[len(s.Undo)-1]
+			s.Undo = s.Undo[:len(s.Undo)-1]
+			s.Cursor = len(graphemes(s.Value))
+			s.Anchor = -1
+			return true, r.changed(n, s)
+		}
+		return true, nil
+	case tcell.KeyCtrlY:
+		if len(s.Redo) > 0 {
+			s.Undo = append(s.Undo, s.Value)
+			s.Value = s.Redo[len(s.Redo)-1]
+			s.Redo = s.Redo[:len(s.Redo)-1]
+			s.Cursor = len(graphemes(s.Value))
+			s.Anchor = -1
+			return true, r.changed(n, s)
+		}
+		return true, nil
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if s.Anchor < 0 || s.Anchor == s.Cursor {
+			if s.Cursor == 0 {
+				return true, nil
+			}
+			s.Anchor = s.Cursor - 1
+		}
+		editSave(s)
+		replaceSelection(s, "")
+		return true, r.changed(n, s)
+	case tcell.KeyDelete:
+		if s.Anchor < 0 || s.Anchor == s.Cursor {
+			if s.Cursor == len(g) {
+				return true, nil
+			}
+			s.Anchor = s.Cursor + 1
+		}
+		editSave(s)
+		replaceSelection(s, "")
+		return true, r.changed(n, s)
+	case tcell.KeyEnter:
+		if n.Type == "input" || e.Modifiers()&tcell.ModCtrl != 0 {
+			return true, r.Action(str(n, "on_submit", ""), map[string]any{"id": n.ID, "value": s.Value, "error": editorValidation(n, s.Value)})
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+	if s.Cursor != old {
+		if shift && s.Anchor < 0 {
+			s.Anchor = old
+		} else if !shift {
+			s.Anchor = -1
+		}
+		return true, nil
+	}
+	return e.Key() == tcell.KeyLeft || e.Key() == tcell.KeyRight || e.Key() == tcell.KeyHome || e.Key() == tcell.KeyEnd, nil
+}
+
+func (r *Runtime) Key(e *tcell.EventKey) error {
+	r.ReconcileFocus()
+	scope := r.scope()
+	if e.Key() == tcell.KeyEscape && scope != r.Root {
+		r.Staged = []Operation{{ID: scope.ID, Props: map[string]any{"hidden": true}}}
+		return r.Commit()
 	}
 	n := r.Nodes[r.Focus]
 	if n != nil {
@@ -468,19 +647,7 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 			return nil
 		}
 		if km, ok := n.Props["keymap"].(map[string]any); ok {
-			var act string
-			keys := make([]string, 0, len(km))
-			for k := range km {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, pattern := range keys {
-				if s, ok := km[pattern].(string); ok && s != "" && keyMatches(pattern, e) {
-					act = s
-					break
-				}
-			}
-			if act != "" {
+			if act := matchKeymapAny(km, e); act != "" {
 				return r.Action(act, map[string]any{
 					"id":    n.ID,
 					"key":   e.Name(),
@@ -503,11 +670,26 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 				"shift": e.Modifiers()&tcell.ModShift != 0,
 			})
 		}
+		if !flag(n, "disabled") {
+			if r.isCollectionEditing(n) {
+				if handled, err := r.keyCollection(n, e); handled || err != nil {
+					return err
+				}
+			}
+			if n.Type == "input" || n.Type == "textarea" {
+				if handled, err := r.editorKey(n, e); handled || err != nil {
+					return err
+				}
+				if handled, err := r.handleEditorControlKey(n, e); handled || err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if action := r.scopeKeymapAction(scope, e); action != "" {
+		return r.Action(action, map[string]any{"key": e.Name(), "focus": r.Focus})
 	}
 	if handled, err := r.bindingKey(e); handled || err != nil {
-		return err
-	}
-	if handled, err := r.editorKey(r.Nodes[r.Focus], e); handled || err != nil {
 		return err
 	}
 	if e.Key() == tcell.KeyTab || e.Key() == tcell.KeyBacktab {
@@ -517,17 +699,7 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 	if n == nil {
 		return r.bubbleAncestorKey(scope, nil, e)
 	}
-	var dir string
-	switch e.Key() {
-	case tcell.KeyUp:
-		dir = "up"
-	case tcell.KeyDown:
-		dir = "down"
-	case tcell.KeyLeft:
-		dir = "left"
-	case tcell.KeyRight:
-		dir = "right"
-	}
+	dir := eventArrowDir(e)
 	if dir != "" {
 		if target, disabled := explicitNavTarget(n, dir); target != "" || disabled {
 			if disabled {
@@ -611,127 +783,7 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 		}
 		return nil
 	}
-	if n.Type != "input" && n.Type != "textarea" {
-		return r.bubbleAncestorKey(scope, n, e)
-	}
-	g := graphemes(s.Value)
-	s.Cursor = max(0, min(s.Cursor, len(g)))
-	old := s.Cursor
-	shift := e.Modifiers()&tcell.ModShift != 0
-	switch e.Key() {
-	case tcell.KeyLeft:
-		s.Cursor = max(0, s.Cursor-1)
-	case tcell.KeyRight:
-		s.Cursor = min(len(g), s.Cursor+1)
-	case tcell.KeyHome:
-		s.Cursor = 0
-		if n.Type == "textarea" {
-			s.Cursor = old
-			for s.Cursor > 0 && g[s.Cursor-1] != "\n" {
-				s.Cursor--
-			}
-		}
-	case tcell.KeyEnd:
-		s.Cursor = len(g)
-		if n.Type == "textarea" {
-			s.Cursor = old
-			for s.Cursor < len(g) && g[s.Cursor] != "\n" {
-				s.Cursor++
-			}
-		}
-	case tcell.KeyUp, tcell.KeyDown:
-		step := -1
-		if e.Key() == tcell.KeyDown {
-			step = 1
-		}
-		_, positions := editorIndex(n, s, editorRect(n, s).W)
-		p := positions[old]
-		s.Cursor = nearestPosition(positions, p[0], max(0, p[1]+step))
-	case tcell.KeyCtrlA:
-		s.Anchor = 0
-		s.Cursor = len(g)
-		return nil
-	case tcell.KeyCtrlC:
-		selected := s.Value
-		if s.Anchor >= 0 && s.Anchor != s.Cursor {
-			a, b := max(0, min(s.Anchor, s.Cursor)), min(len(g), max(s.Anchor, s.Cursor))
-			selected = strings.Join(g[a:b], "")
-		}
-		return r.ClipboardAdapter().Write(selected)
-	case tcell.KeyCtrlX:
-		if s.Anchor >= 0 && s.Anchor != s.Cursor {
-			a, b := max(0, min(s.Anchor, s.Cursor)), min(len(g), max(s.Anchor, s.Cursor))
-			if err := r.ClipboardAdapter().Write(strings.Join(g[a:b], "")); err != nil {
-				return err
-			}
-			editSave(s)
-			replaceSelection(s, "")
-			return r.changed(n, s)
-		}
-		return nil
-	case tcell.KeyCtrlV:
-		text, err := r.ClipboardAdapter().Read()
-		if err != nil || text == "" {
-			return err
-		}
-		return r.Paste(text)
-	case tcell.KeyCtrlZ:
-		if len(s.Undo) > 0 {
-			s.Redo = append(s.Redo, s.Value)
-			s.Value = s.Undo[len(s.Undo)-1]
-			s.Undo = s.Undo[:len(s.Undo)-1]
-			s.Cursor = len(graphemes(s.Value))
-			s.Anchor = -1
-			return r.changed(n, s)
-		}
-		return nil
-	case tcell.KeyCtrlY:
-		if len(s.Redo) > 0 {
-			s.Undo = append(s.Undo, s.Value)
-			s.Value = s.Redo[len(s.Redo)-1]
-			s.Redo = s.Redo[:len(s.Redo)-1]
-			s.Cursor = len(graphemes(s.Value))
-			s.Anchor = -1
-			return r.changed(n, s)
-		}
-		return nil
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		if s.Anchor < 0 || s.Anchor == s.Cursor {
-			if s.Cursor == 0 {
-				return nil
-			}
-			s.Anchor = s.Cursor - 1
-		}
-		editSave(s)
-		replaceSelection(s, "")
-		return r.changed(n, s)
-	case tcell.KeyDelete:
-		if s.Anchor < 0 || s.Anchor == s.Cursor {
-			if s.Cursor == len(g) {
-				return nil
-			}
-			s.Anchor = s.Cursor + 1
-		}
-		editSave(s)
-		replaceSelection(s, "")
-		return r.changed(n, s)
-	case tcell.KeyEnter:
-		if n.Type == "input" || e.Modifiers()&tcell.ModCtrl != 0 {
-			return r.Action(str(n, "on_submit", ""), map[string]any{"id": n.ID, "value": s.Value, "error": editorValidation(n, s.Value)})
-		}
-	}
-	if s.Cursor != old {
-		if shift && s.Anchor < 0 {
-			s.Anchor = old
-		} else if !shift {
-			s.Anchor = -1
-		}
-	} else {
-		if err := r.bubbleAncestorKey(scope, n, e); err != nil {
-			return err
-		}
-	}
-	return nil
+	return r.bubbleAncestorKey(scope, n, e)
 }
 
 func (r *Runtime) Mouse(e *tcell.EventMouse) error {
@@ -740,18 +792,19 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 	pressed := down && !r.mouseDown
 	r.mouseDown = down
 	var hit *Node
-	var scroll *Node
-	var walk func(*Node)
-	walk = func(n *Node) {
+	var hitScroll *Node
+	var walk func(*Node, *Node)
+	walk = func(n, curScroll *Node) {
 		if flag(n, "hidden") || x < n.Clip.X || x >= n.Clip.X+n.Clip.W || y < n.Clip.Y || y >= n.Clip.Y+n.Clip.H {
 			return
 		}
-		hit = n
 		if n.Type == "scroll" {
-			scroll = n
+			curScroll = n
 		}
+		hit = n
+		hitScroll = curScroll
 		for _, c := range sortedChildren(n) {
-			walk(c)
+			walk(c, curScroll)
 		}
 	}
 	r.ReconcileFocus()
@@ -762,12 +815,12 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 		return nil
 	}
 	r.releaseMouse(e)
-	walk(r.scope())
+	walk(r.scope(), nil)
 	if hit == nil {
 		return nil
 	}
-	if e.Buttons()&(tcell.WheelDown|tcell.WheelUp) != 0 && hit.Type != "list" && hit.Type != "table" && hit.Type != "viewport" && hit.Type != "tree" && hit.Type != "filepicker" && scroll != nil {
-		hit = scroll
+	if e.Buttons()&(tcell.WheelDown|tcell.WheelUp) != 0 && hit.Type != "list" && hit.Type != "table" && hit.Type != "viewport" && hit.Type != "tree" && hit.Type != "filepicker" && hitScroll != nil {
+		hit = hitScroll
 	}
 	s := r.State[hit.ID]
 	if s == nil {

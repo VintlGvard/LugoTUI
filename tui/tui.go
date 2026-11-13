@@ -245,7 +245,7 @@ func toRunnerOptions(options Options, control <-chan runner.ControlMsg) runner.O
 		DisablePanicRecovery: options.DisablePanicRecovery,
 		Control:              control,
 	}
-	if len(options.Middlewares) == 0 && len(options.Actions) > 0 {
+	if len(options.Actions) > 0 {
 		opts.GoActions = wrapGoActions(options.Actions, wrapRuntime)
 	}
 	if options.ViewFunc != nil {

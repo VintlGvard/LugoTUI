@@ -479,3 +479,79 @@ return {
 			pingCalls.Load(), fallbackCalls.Load())
 	}
 }
+
+func TestProgramPreservesGoActionsAndMiddlewaresTogether(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatal(err)
+	}
+	sim.SetSize(40, 6)
+
+	var (
+		actionCalls atomic.Int32
+		mwCalls     atomic.Int32
+	)
+	ready := make(chan struct{})
+	mwDone := make(chan struct{})
+
+	root := tui.Column().Add(
+		tui.Button("Go").SetID("btn").OnClick("direct"),
+	)
+
+	p := tui.NewProgram(
+		tui.WithView(root),
+		tui.WithScreen(sim),
+		tui.WithAction("direct", func(r *tui.Runtime, _ any) error {
+			actionCalls.Add(1)
+			r.Emit("notified", map[string]any{"ok": true})
+			return nil
+		}),
+		tui.WithAction("fail", func(r *tui.Runtime, _ any) error {
+			if err := r.Set("leaked", "bad"); err != nil {
+				return err
+			}
+			return errors.New("boom")
+		}),
+		tui.WithMiddleware(func(next tui.EventHandler) tui.EventHandler {
+			return func(r *tui.Runtime, ev tui.HostEvent) error {
+				mwCalls.Add(1)
+				err := next(r, ev)
+				if ev.Action == "notified" {
+					select {
+					case <-mwDone:
+					default:
+						close(mwDone)
+					}
+				}
+				return err
+			}
+		}),
+		tui.WithOnReady(func(_ *tui.Runtime) { close(ready) }),
+	)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Run()
+	}()
+	<-ready
+
+	if err := p.Send("fail", nil); err == nil {
+		t.Fatal("expected fail GoAction to return error")
+	}
+	if err := p.Send("direct", nil); err != nil {
+		t.Fatalf("p.Send(direct) failed: %v", err)
+	}
+	select {
+	case <-mwDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for middleware dispatch")
+	}
+	p.Quit()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("Program.Run failed: %v", err)
+	}
+	if actionCalls.Load() != 1 || mwCalls.Load() != 1 {
+		t.Fatalf("expected actionCalls=1 and mwCalls=1, got action=%d mw=%d", actionCalls.Load(), mwCalls.Load())
+	}
+}

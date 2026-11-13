@@ -288,3 +288,11 @@ func TestScrollKeyboard(t *testing.T) {
 		t.Fatal("home")
 	}
 }
+
+func TestMouseOverlayBlocksSiblingScrollWheel(t *testing.T) {
+	r := mouseFixture(t, `return {view={type='box',{type='scroll',id='viewport',position='absolute',width=10,height=4,{type='text',height=40,text='content'}},{type='overlay',id='cover',position='absolute',width=10,height=4,z_index=1}}}`)
+	r.Mouse(tcell.NewEventMouse(1, 1, tcell.WheelDown, 0))
+	if r.State("viewport").Scroll != 0 {
+		t.Fatalf("wheel leaked through sibling overlay: scroll=%d", r.State("viewport").Scroll)
+	}
+}

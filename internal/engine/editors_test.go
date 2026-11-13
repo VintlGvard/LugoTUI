@@ -284,3 +284,109 @@ func TestEditorPrefixAndMaskedPositions(t *testing.T) {
 		t.Fatalf("mask positions %q %v", g, p)
 	}
 }
+
+func TestLuaTransactionRollsBackClosureUpvalues(t *testing.T) {
+	src := `
+local ui = require('ui')
+local count = 10
+local stats = { n = 1, nested = { tag = 'ok' } }
+local function bumpHidden(delta)
+	count = count + delta
+	stats.n = stats.n + delta
+	stats.nested.tag = 'dirty'
+end
+return {
+	view = ui.text{ id = 't', text = 'ok' },
+	actions = {
+		fail = function()
+			bumpHidden(5)
+			ui.set('model_val', 'mutated')
+			error('boom')
+		end,
+		read = function()
+			ui.set('count', count)
+			ui.set('stats_n', stats.n)
+			ui.set('tag', stats.nested.tag)
+		end,
+	},
+}
+`
+	r, err := Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	if err := r.Action("fail", nil); err == nil {
+		t.Fatal("expected fail action error")
+	}
+	if r.Data["model_val"] != nil {
+		t.Fatalf("model_val leaked after rollback: %v", r.Data["model_val"])
+	}
+	if err := r.Action("read", nil); err != nil {
+		t.Fatal(err)
+	}
+	if r.Data["count"] != float64(10) || r.Data["stats_n"] != float64(1) || r.Data["tag"] != "ok" {
+		t.Fatalf("upvalues were not rolled back: count=%v stats_n=%v tag=%v", r.Data["count"], r.Data["stats_n"], r.Data["tag"])
+	}
+}
+
+func TestFocusedEditorConsumesTypingBeforeGlobalKeymap(t *testing.T) {
+	src := `
+local ui = require('ui')
+return {
+	keymap = { q = 'quit_act', j = 'down_act', ['?'] = 'help_act', Backspace = 'back_act', F1 = 'f1_act', ['Ctrl+P'] = 'palette_act' },
+	view = ui.column{
+		ui.input{ id = 'inp', text = '' },
+		ui.help{ id = 'hlp', keys = { { keys = { '?' }, action = 'binding_act', label = 'help' } } },
+	},
+	actions = {
+		quit_act = function() host.dispatch('quit_act', {}) end,
+		down_act = function() host.dispatch('down_act', {}) end,
+		help_act = function() host.dispatch('help_act', {}) end,
+		back_act = function() host.dispatch('back_act', {}) end,
+		f1_act = function() host.dispatch('f1_act', {}) end,
+		palette_act = function() host.dispatch('palette_act', {}) end,
+		binding_act = function() host.dispatch('binding_act', {}) end,
+	},
+}
+`
+	r, err := Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	for _, ch := range []rune{'q', 'j', '?'} {
+		if err := r.Key(tcell.NewEventKey(tcell.KeyRune, ch, tcell.ModNone)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ev := r.DrainEvents(); len(ev) != 0 {
+		t.Fatalf("editor keys leaked to global keymap/bindingKey: %+v", ev)
+	}
+	if got := r.State["inp"].Value; got != "qj?" {
+		t.Fatalf("expected input value %q, got %q", "qj?", got)
+	}
+
+	if err := r.Key(tcell.NewEventKey(tcell.KeyBackspace2, 0, tcell.ModNone)); err != nil {
+		t.Fatal(err)
+	}
+	if ev := r.DrainEvents(); len(ev) != 0 {
+		t.Fatalf("backspace leaked to global keymap: %+v", ev)
+	}
+	if got := r.State["inp"].Value; got != "qj" {
+		t.Fatalf("expected input value %q after backspace, got %q", "qj", got)
+	}
+
+	if err := r.Key(tcell.NewEventKey(tcell.KeyF1, 0, tcell.ModNone)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Key(tcell.NewEventKey(tcell.KeyCtrlP, 0, tcell.ModCtrl)); err != nil {
+		t.Fatal(err)
+	}
+	ev := r.DrainEvents()
+	if len(ev) != 2 || ev[0].Action != "f1_act" || ev[1].Action != "palette_act" {
+		t.Fatalf("expected non-editor global hotkeys to still fire, got %+v", ev)
+	}
+}

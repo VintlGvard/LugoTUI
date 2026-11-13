@@ -778,7 +778,7 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 	oldModal := r.modalID
 	oldData := r.Data
 	r.Data = cloneData(oldData)
-	oldGlobals := snapshotLuaGlobals(r.L)
+	oldSnap := snapshotLuaState(r.L, r.actions)
 	oldEvents := len(r.Events)
 	r.Staged = nil
 	r.stagedFocus = nil
@@ -788,7 +788,7 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 		r.inAction = false
 		if !committed {
 			r.Data = oldData
-			restoreLuaGlobals(r.L, oldGlobals)
+			restoreLuaState(r.L, oldSnap)
 			r.PreviousFocus = oldPrevious
 			r.modalID = oldModal
 			r.Staged = nil
@@ -896,46 +896,108 @@ func cloneData(src map[string]any) map[string]any {
 	return out
 }
 
-func snapshotLuaGlobals(L *lua.LState) map[lua.LValue]lua.LValue {
+type luaStateSnapshot struct {
+	globals  map[lua.LValue]lua.LValue
+	upvalues map[*lua.Upvalue]lua.LValue
+}
+
+func snapshotLuaState(L *lua.LState, actions *lua.LTable) luaStateSnapshot {
 	if L == nil || L.G == nil || L.G.Global == nil {
-		return nil
+		return luaStateSnapshot{}
 	}
-	snap := map[lua.LValue]lua.LValue{}
+	cloned := make(map[*lua.LTable]*lua.LTable)
+	snap := luaStateSnapshot{
+		globals:  make(map[lua.LValue]lua.LValue),
+		upvalues: make(map[*lua.Upvalue]lua.LValue),
+	}
 	L.G.Global.ForEach(func(k, v lua.LValue) {
-		snap[k] = cloneLuaValue(L, v, 0)
+		snap.globals[k] = cloneLuaValue(L, v, 0, cloned)
 	})
+	visitedTables := make(map[*lua.LTable]struct{})
+	visitedFuncs := make(map[*lua.LFunction]struct{})
+	var collect func(lua.LValue, int)
+	collect = func(v lua.LValue, depth int) {
+		if depth > 16 || v == nil {
+			return
+		}
+		switch x := v.(type) {
+		case *lua.LFunction:
+			if x.IsG {
+				return
+			}
+			if _, ok := visitedFuncs[x]; ok {
+				return
+			}
+			visitedFuncs[x] = struct{}{}
+			for _, uv := range x.Upvalues {
+				if uv == nil {
+					continue
+				}
+				if _, ok := snap.upvalues[uv]; ok {
+					continue
+				}
+				val := uv.Value()
+				snap.upvalues[uv] = cloneLuaValue(L, val, 0, cloned)
+				collect(val, depth+1)
+			}
+		case *lua.LTable:
+			if _, ok := visitedTables[x]; ok {
+				return
+			}
+			visitedTables[x] = struct{}{}
+			x.ForEach(func(_, val lua.LValue) {
+				collect(val, depth+1)
+			})
+		}
+	}
+	if actions != nil {
+		collect(actions, 0)
+	}
+	collect(L.G.Global, 0)
 	return snap
 }
 
-func restoreLuaGlobals(L *lua.LState, snap map[lua.LValue]lua.LValue) {
-	if L == nil || L.G == nil || L.G.Global == nil || snap == nil {
+func restoreLuaState(L *lua.LState, snap luaStateSnapshot) {
+	if L == nil || L.G == nil || L.G.Global == nil {
 		return
 	}
-	var toDelete []lua.LValue
-	L.G.Global.ForEach(func(k, _ lua.LValue) {
-		if _, ok := snap[k]; !ok {
-			toDelete = append(toDelete, k)
+	if snap.globals != nil {
+		var toDelete []lua.LValue
+		L.G.Global.ForEach(func(k, _ lua.LValue) {
+			if _, ok := snap.globals[k]; !ok {
+				toDelete = append(toDelete, k)
+			}
+		})
+		for _, k := range toDelete {
+			L.G.Global.RawSet(k, lua.LNil)
 		}
-	})
-	for _, k := range toDelete {
-		L.G.Global.RawSet(k, lua.LNil)
+		for k, v := range snap.globals {
+			L.G.Global.RawSet(k, v)
+		}
 	}
-	for k, v := range snap {
-		L.G.Global.RawSet(k, v)
+	for uv, val := range snap.upvalues {
+		uv.SetValue(val)
 	}
 }
 
-func cloneLuaValue(L *lua.LState, v lua.LValue, depth int) lua.LValue {
-	if depth > 8 {
+func cloneLuaValue(L *lua.LState, v lua.LValue, depth int, cloned map[*lua.LTable]*lua.LTable) lua.LValue {
+	if depth > 16 {
 		return v
 	}
 	t, ok := v.(*lua.LTable)
 	if !ok || t == L.G.Global {
 		return v
 	}
+	if existing, ok := cloned[t]; ok {
+		return existing
+	}
 	copyTbl := L.NewTable()
+	cloned[t] = copyTbl
+	if t.Metatable != nil && t.Metatable != lua.LNil {
+		copyTbl.Metatable = cloneLuaValue(L, t.Metatable, depth+1, cloned)
+	}
 	t.ForEach(func(k, val lua.LValue) {
-		copyTbl.RawSet(k, cloneLuaValue(L, val, depth+1))
+		copyTbl.RawSet(k, cloneLuaValue(L, val, depth+1, cloned))
 	})
 	return copyTbl
 }

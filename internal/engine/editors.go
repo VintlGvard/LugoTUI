@@ -270,7 +270,7 @@ func editorWord(g []string, cursor, direction int) int {
 }
 
 func (r *Runtime) editorKey(n *Node, e *tcell.EventKey) (bool, error) {
-	if n == nil || (n.Type != "input" && n.Type != "textarea") {
+	if n == nil || flag(n, "disabled") || (n.Type != "input" && n.Type != "textarea") {
 		return false, nil
 	}
 	s := r.State[n.ID]
@@ -365,7 +365,7 @@ func (r *Runtime) editorKey(n *Node, e *tcell.EventKey) (bool, error) {
 		}
 		return true, r.changed(n, s)
 	default:
-		return key == tcell.KeyRune && (alt || ctrl), nil
+		return false, nil
 	}
 	if deleting {
 		if s.Anchor < 0 || s.Anchor == old {
