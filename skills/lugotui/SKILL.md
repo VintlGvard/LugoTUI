@@ -1,39 +1,24 @@
 ---
 name: lugotui
-description: Build, inspect, test, and debug Pure-Go and Go+Lua TUI applications with LugoTUI. Covers Pure-Go reactive & retained View Builder DSL, Lua Live Hot-Reload templates, Flexbox widgets, two-way state binding, 2D spatial & directional navigation, middleware/hooks, Go background tasks, and JSON Lines IPC socket control.
+description: Build, inspect, test, and debug Pure Go and Go+Lua TUI applications with LugoTUI (v0.2.2+). Covers the Go DSL (`github.com/VintlGvard/LugoTUI`), Lua UI declaration, Flexbox widgets, grapheme-safe state binding, 2D spatial/directional navigation, widget keymaps, background tasks, live reload, CLI/sandbox flags, and JSON Lines IPC socket control.
 ---
 
-# LugoTUI Developer & Agent Skill
+# LugoTUI Development & Agent Control Skill (v0.2.2)
 
-LugoTUI is a high-performance Terminal UI framework for Go (`github.com/VintlGvard/LugoTUI` / `github.com/VintlGvard/LugoTUI/tui`) that works **100% in Pure Go** (exceeding Bubble Tea + Lip Gloss + Bubbles out of the box) AND supports **Lua Live Hot-Reload (150ms)** as its killer feature.
+Build terminal user interfaces in **Pure Go** (`github.com/VintlGvard/LugoTUI`, Go 1.24+) or **Go + Embedded Lua** (`require("ui")`) with deterministic Flexbox layout, grapheme-safe editing, background task orchestration, panic-safe terminal recovery, and JSON Lines IPC.
 
 ## When to Activate
-
-- Building TUI applications in **Pure Go** (`QuickViewFunc`, `QuickView`, `NewProgram`, fluent View Builder DSL)
-- Building **Hybrid Go + Lua** TUI applications (`app.lua` + `WithAppFile` / `WithHandlers`) with 150ms live hot-reload
-- Implementing keyboard navigation (2D spatial, directional arrows, Vim keys, widget-scoped keymaps)
-- Using middleware (`WithMiddleware`), input filters (`WithInputFilter`), state observers (`WithStateObserver`), OSC52 clipboard (`WithClipboard`), or custom cell-diff renderers (`WithRenderer`)
-- Running background tasks (`StartTask`, `StartTaskNamed`, `StartTaskDebounced`) and external control (`Program.Send`, `Program.Set`, `Program.Patch`, `Program.Quit`)
-- Automating, testing, or inspecting running TUIs via headless `LoadView` / `LoadViewFunc` / `Load` or Unix domain socket IPC
+- Creating or editing LugoTUI applications in Pure Go (`lugotui` / `tui`) or Lua (`app.lua`).
+- Configuring `Program` options, `Middleware`, Go actions (`WithAction`, `WithHandlers`), `OnEvent`, custom `Canvas` widgets, or themes.
+- Debugging layout, focus isolation, modal `z_index` mouse blocking, keymap/editor conflicts, Lua rollbacks, or Unicode/emoji text editing.
+- Running `lugotui` CLI checks (`--check`, `--snapshot`, `--sandbox`) or automating a live TUI over `--socket` JSON Lines IPC.
 
 ---
 
-## 1. Execution & Architecture Modes
+## 1. Execution Models & Entry Points
 
-| Mode | Entry Point | Best For |
-| --- | --- | --- |
-| **1. Pure-Go Reactive (Bubble Tea Killer)** | `lugotui.QuickViewFunc(fn, handlers, opts...)` / `WithViewFunc(fn)` | Pure-Go apps with reactive `func(rt *Runtime) *Node` view functions. Zero Lua VM overhead, automatic Flexbox layout, and automatic preservation of focus, cursor, and scroll state across re-renders. |
-| **2. Pure-Go Retained** | `lugotui.QuickView(root, handlers, opts...)` / `WithView(root)` | Pure-Go apps that build the widget tree once and mutate via `rt.Set(k, v)` (two-way `Bind`) or surgical `rt.Patch` / `rt.Replace`. |
-| **3. Hybrid Go + Lua (Killer Feature)** | `lugotui.RunApp("app.lua", opts...)` / `QuickRun(src, handlers)` | Instant **150ms Live Hot-Reload** on `.lua` edits, user-customizable plugins/themes, and optional Linux `bubblewrap` sandboxing (`--sandbox`). Widget events (`on_click = "save"`) dispatch directly to Go `WithAction` / `WithHandlers` without Lua boilerplate! |
-| **4. Standalone CLI / IPC** | `lugotui --app app.lua [--socket /tmp/app.sock]` | Rapid prototyping, standalone Lua tools, and external AI agent control over JSON Lines Unix socket. |
-
-Both `github.com/VintlGvard/LugoTUI` (root package `lugotui`) and `github.com/VintlGvard/LugoTUI/tui` export the exact same API.
-
----
-
-## 2. Mode 1: Pure-Go Reactive UI (`WithViewFunc` / `QuickViewFunc`)
-
-Unlike Bubble Tea—where you manually route `tea.Msg` through every child input/table, calculate `lipgloss.Width` math on `tea.WindowSizeMsg`, and concatenate ANSI strings—LugoTUI gives you a declarative Go View Builder with automatic Flexbox layout, 2D focus management, and cell-diff rendering:
+### Model A: Pure Go (`github.com/VintlGvard/LugoTUI`)
+Import `lugotui "github.com/VintlGvard/LugoTUI"` (or `tui "github.com/VintlGvard/LugoTUI/tui"`):
 
 ```go
 package main
@@ -41,36 +26,25 @@ package main
 import (
 	"log"
 
-	lugo "github.com/VintlGvard/LugoTUI"
+	lugotui "github.com/VintlGvard/LugoTUI"
 )
 
 func main() {
-	err := lugo.QuickViewFunc(
-		func(rt *lugo.Runtime) *lugo.Node {
-			return lugo.Column(
-				lugo.Panel("Counter Dashboard",
-					lugo.Textf("Query: %s | Count: %d", rt.String("query"), rt.Int("count")).Bold(true).FG("cyan"),
-					lugo.Input("query").SetID("search").Placeholder("Type to filter..."),
-					lugo.If(rt.Bool("details"),
-						lugo.Text("Extra diagnostics enabled").FG("green"),
-					),
-					lugo.Row(
-						lugo.Button("+1", "inc").SetID("btn_inc"),
-						lugo.Button("Toggle Details", "toggle").SetID("btn_toggle"),
-					).Gap(1),
-				).Grow(1).Padding(1).Gap(1),
-			).Padding(1)
+	err := lugotui.QuickViewFunc(
+		func(rt *lugotui.Runtime) *lugotui.Node {
+			name := rt.String("name", "world")
+			return lugotui.Panel("Hello",
+				lugotui.Input("name", "Your name...").Width(30),
+				lugotui.Textf("Hi, %s!", name),
+				lugotui.Button("Quit", "quit"),
+			).Padding(1).Gap(1)
 		},
-		map[string]lugo.ActionHandler{
-			"inc": func(rt *lugo.Runtime, _ any) error {
-				return rt.AddInt("count", 1)
-			},
-			"toggle": func(rt *lugo.Runtime, _ any) error {
-				return rt.ToggleBool("details")
+		map[string]lugotui.ActionHandler{
+			"quit": func(rt *lugotui.Runtime, _ map[string]any) error {
+				return rt.Quit()
 			},
 		},
-		lugo.WithState("count", 0),
-		lugo.WithState("details", false),
+		lugotui.WithInitialData(map[string]any{"name": "Lugo"}),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -78,211 +52,183 @@ func main() {
 }
 ```
 
-### Why This Beats Bubble Tea
-- **Zero Boilerplate**: No `Init()`, `Update(tea.Msg)`, `View() string` ceremony or manual `tea.WindowSizeMsg` math.
-- **Preserved Widget State**: Typing into `lugo.Input("query").SetID("search")` automatically updates `rt.String("query")`, re-evaluates `ViewFunc`, and reconciles the new `*Node` tree while keeping keyboard focus, cursor position, and undo history intact.
-- **Conditional & List Helpers**:
-  - `lugo.If(cond, node)` / `node.When(cond)` — returns `nil` when false (containers automatically ignore `nil` children).
-  - `lugo.IfElse(cond, thenNode, elseNode)`
-  - `lugo.Map(slice, func(i int, item T) *lugo.Node { ... })`
+Key entry points on `lugotui`:
+- `QuickViewFunc(fn ViewFunc, handlers map[string]ActionHandler, opts ...Option) error`
+- `QuickView(root *Node, handlers map[string]ActionHandler, opts ...Option) error`
+- `QuickRun(luaSource string, handlers map[string]ActionHandler, opts ...Option) error`
+- `RunApp(appFile string, opts ...Option) error`
+- `RunSource(luaSource string, opts ...Option) error`
+- `NewProgram(opts ...Option) *Program` (`p.Run() error`)
+
+### Program Options (`Option`)
+- **View / Source**: `WithViewFunc(fn)`, `WithView(root)`, `WithAppFile(path)`, `WithSource(luaSource)`
+- **Initial State**: `WithInitialData(map[string]any)`, `WithState(key, val)`
+- **Actions, Events & Hooks**:
+  - `WithAction(name, handler)` / `WithHandlers(map[string]ActionHandler)` — register Go actions (and auto-wire host dispatch). `WithHandlers` snapshots the caller map so later mutations do not affect the program.
+  - `WithOnEvent(func(*Runtime, HostEvent) error)` — chained cleanly with other `WithOnEvent` / `WithHandlers` options regardless of option order; invoked **only after** action state commits.
+  - `WithMiddleware(mw ...EventMiddleware)` — composes cleanly alongside `WithAction` / `WithHandlers` (`GoActions` are preserved alongside `Middlewares`).
+  - `WithInputFilter(InputFilter)`, `WithStateObserver(obs ...StateObserver)`, `WithOnReady(func(*Runtime))`
+- **Terminal & Rendering**: `WithTheme(Theme)`, `WithAltScreen(bool)`, `WithInline(height int)`, `WithMouse(bool)`, `WithPaste(bool)`, `WithFPS(fps int)`, `WithClipboard(Clipboard)`, `WithRenderer(Renderer)`, `WithRendererFunc(...)`, `WithScreen(tcell.Screen)`, `WithReservedKeys(ReservedKeys)`, `WithoutPanicRecovery()`
+- **Tooling / Automation**: `WithSocket(path)`, `WithCheck()`, `WithSnapshot()`, `WithSandbox()`
+
+Default theme: `lugotui.DefaultTheme()` (returns `lugotui.Theme`).
+
+### Runtime Stability Invariants (v0.2.2)
+- **Panic recovery**: enabled by default; panics inside `Program.Run()` restore the terminal cleanly and return an error wrapping `lugotui.ErrPanicRecovered`.
+- **Dynamic idle tick & diff skip**: when `NeedsTick() == false`, the idle ticker stops to avoid spinning CPU; redraw skips `screen.Show()` when neither the cell buffer nor cursor state changed, and updates cursor state before `screen.Show()`.
 
 ---
 
-## 3. Mode 2: Pure-Go Retained UI (`WithView` / `QuickView`)
+## 2. Declarative Go DSL & Widget Constructors
 
-For maximum performance (12 heap allocations per frame on a 300-node tree), build the view once and let two-way `Bind(key)` and `rt.Set(key, val)` update widgets in place:
+All constructors below are exported by both `lugotui` and `tui`:
 
+### Containers & Control Flow
+- `NewNode(kind string, children ...*Node) *Node`
+- `Column(children ...*Node) *Node`, `Row(children ...*Node) *Node`, `Box(children ...*Node) *Node`
+- `Overlay(children ...*Node) *Node`, `Spacer() *Node`
+- `Panel(title string, children ...*Node) *Node` (sets border + title)
+- `Scroll(children ...*Node) *Node`
+- `Modal(id, title string, children ...*Node) *Node`
+- `If(cond bool, node *Node) *Node`, `IfElse(cond bool, thenNode, elseNode *Node) *Node`
+- `Map[T any](items []T, fn func(index int, item T) *Node) []*Node`
+
+### Standard Widgets
+- `Text(text string) *Node`, `Textf(format string, args ...any) *Node`
+- `Button(label string, onClick ...string) *Node` (`text` defaults to `label` when absent)
+- `Input(bindKey string, placeholder ...string) *Node`
+- `Textarea(bindKey string, placeholder ...string) *Node`
+- `List(items ...string) *Node`
+- `Table(columns []TableColumn, rows [][]string) *Node` (`TableColumn{Title string, Width int, Align string}`)
+- `Tree(items ...TreeItem) *Node` (`TreeItem{ID string, Text string, Expanded bool, Children []TreeItem}`)
+- `Viewport(text string, highlights ...HighlightSpan) *Node` (`HighlightSpan{Start int, End int}`)
+- `Filepicker(entries ...FileEntry) *Node` (`FileEntry{Text string, Name string, Path string, IsDir bool, Size any, Permissions string}`)
+- `Spinner(preset ...string) *Node`, `Progress(percent float64) *Node`
+- `Paginator(page, perPage, total int) *Node`
+- `Timer(durationMs int, onTimeout ...string) *Node`, `Stopwatch() *Node`
+- `Help(bindings ...HelpBinding) *Node` (`HelpBinding{Keys []string, Description string, Action string, Disabled bool}`)
+- `Cursor() *Node`
+
+### Custom Drawing Widget (`Canvas`)
+Use `Custom(paintFn func(c Canvas)) *Node`:
 ```go
-view := lugo.Column(
-	lugo.Text("").Bind("status").Height(1),
-	lugo.Input("name").Placeholder("Enter your name...").OnSubmit("save").Height(1),
-	lugo.Button("Save", "save").Height(1),
-).Padding(1).Gap(1)
-
-err := lugo.QuickView(view, map[string]lugo.ActionHandler{
-	"save": func(rt *lugo.Runtime, _ any) error {
-		return rt.Set("status", "Saved: "+rt.String("name"))
-	},
-}, lugo.WithState("status", "Ready"))
+lugotui.Custom(func(c lugotui.Canvas) {
+    b := c.Bounds()
+    c.Fill(b, ' ')
+    c.Printf(b.X+1, b.Y, tcell.StyleDefault.Bold(true), "W:%d H:%d Focused:%v", b.Width, b.Height, c.IsFocused())
+}).Focusable(true).Size(40, 8)
 ```
+Exact `Canvas` methods:
+- `Bounds() Rect`
+- `SetCell(x, y int, r rune, st ...tcell.Style)`
+- `Print(x, y int, text string, st ...tcell.Style)`
+- `Printf(x, y int, st tcell.Style, format string, args ...any)`
+- `Fill(r Rect, ch rune, st ...tcell.Style)`
+- `LineH(x, y, w int, ch rune, st ...tcell.Style)`
+- `LineV(x, y, h int, ch rune, st ...tcell.Style)`
+- `IsFocused() bool`
 
-Note: Explicit `.SetID("...")` is optional in Pure-Go views—`AutoAssignIDs` deterministically assigns stable IDs (`root`, `root.input_name`, `root.button_save`, etc.) when omitted. Provide explicit `.SetID("...")` when targeting a node with `rt.Patch(id, ...)` or when reordering dynamic children in `WithViewFunc`.
+For direct low-level keyboard handling on a custom node, chain `.OnRawKey(func(e *tcell.EventKey) bool)`.
 
 ---
 
-## 4. Mode 3: Hybrid Go + Lua Live Hot-Reload (`WithAppFile` / `WithSource`)
+## 3. Chainable `*Node` Methods (Verified API)
 
-Move layout into `app.lua` whenever you want **150ms live hot-reload** without recompiling Go, or user-scriptable themes/plugins.
+- **Identity, Binding & Composition**:
+  - `.SetID(id)`, `.Prop(key, val)`, `.PropsMap(map[string]any)`, `.Add(children...)`
+  - `.When(cond bool, fn func(*Node))` *(mutates conditionally only when `cond` is true)*
+  - `.Bind(key)`, `.Source(key)`
+- **Dimensions & Positioning**:
+  - `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`
+  - `.Grow(g)` / `.Flex(g)`, `.Shrink(s)`, `.Padding(p)`, `.Margin(m)`, `.Gap(g)`
+  - `.Absolute(left, top)`, `.Top(v)`, `.Right(v)`, `.Bottom(v)`, `.Left(v)`, `.Inset(top, right, bottom, left)`
+- **Text, Borders & Colors**:
+  - `.Text(s)`, `.Textf(format, args...)`, `.Title(s)`, `.Placeholder(s)`
+  - `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Gradient(startColor, endColor)`
+  - `.Align(s)`, `.Justify(s)`, `.Wrap(bool)`, `.WrapMode(mode)`
+  - `.Border(v...)`, `.BorderStyle(s)`, `.BorderFG(c)`, `.BorderBG(c)`, `.BorderColor(fg, bg...)`, `.TitleFG(c)`
+  - `.BorderGlyphs(bg)` with presets: `BorderSingle`, `BorderRounded`, `BorderDouble`, `BorderThick`, `BorderASCII`
+  - `.ButtonStyle(s)`, `.Plain()`, `.Filled()`, `.Chevrons()`, `.Parens()`, `.Prefix(p)`, `.Suffix(s)`
+  - `.CursorPrefix(cp)`, `.SelectedFG(c)`, `.SelectedBG(c)`, `.SelectedBold(v...)`
+- **Behavior, State & Navigation**:
+  - `.Hidden(bool)`, `.Disabled(bool)`, `.Focusable(v...)`
+  - `.Modal(bool)`, `.Backdrop(mode)`, `.CloseOnEsc(bool)`, `.ZIndex(z)`
+  - `.Echo(mode)`, `.Masked(bool)`, `.CharLimit(n)` / `.MaxLength(n)`, `.ValidationPattern(regex)`
+  - `.Filterable(bool)`, `.MultiSelect(bool)`, `.ItemHeight(h)`
+  - `.ShowIcons(bool)`, `.ShowHidden(bool)`, `.CurrentDir(dir)`
+  - `.Items(items...)`, `.Selected(idx)`, `.Running(bool)`, `.Percent(p)`, `.ShowPercentage(bool)`
+  - `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.Mode(m)`, `.Preset(p)`, `.Duration(ms)`, `.Interval(ms)`
+  - `.Page(page, perPage, total int)`
+  - `.NavUp(id)`, `.NavDown(id)`, `.NavLeft(id)`, `.NavRight(id)`, `.Nav(up, down, left, right)`
+- **Events & Keymaps**:
+  - Action names: `.OnClick(action)`, `.OnChange(action)`, `.OnSubmit(action)`, `.OnSelect(action)`, `.OnNavigate(action)`, `.OnTimeout(action)`, `.OnKey(action)`
+  - Typed Go callbacks: `.OnClickDo(func())`, `.OnClickErr(func() error)`, `.OnChangeText(func(string))`, `.OnChangeTextErr(func(string) error)`, `.OnSubmitText(func(string))`, `.OnSubmitTextErr(func(string) error)`, `.OnSelectItem(func(int, any))`, `.OnSelectItemErr(func(int, any) error)`, `.OnTimeoutDo(func())` *(plus dynamic `...Func(any)` variants)*
+  - Keymaps: `.Key(k, action)`, `.KeyDo(k, func())`, `.KeyErr(k, func() error)`, `.KeyFunc(k, fn)`, `.Keymap(map[string]string)`
 
-### Direct Go Dispatch (Zero Lua Action Boilerplate)
-Widget events (`on_click`, `on_change`, `on_submit`, `on_select`, `keymap`) in `app.lua` automatically invoke Go handlers registered via `WithAction` / `WithHandlers`—you do **not** need to write pass-through Lua `actions = { ... }` functions unless you want local Lua logic!
+*(Note: `*Node` does **not** have `.Italic()`, `.Underline()`, or `.PageSize()`; use `.Page(page, perPage, total)` for paginators.)*
 
-```lua
--- app.lua
-local ui = require('ui')
+---
 
-return {
-    api_version = 1,
-    spatial_nav = true,
-    view = function()
-        return ui.column {
-            padding = 1, gap = 1,
-            ui.panel {
-                title = "Dashboard",
-                border = true,
-                ui.text { bind = "status_msg", height = 1 },
-                ui.row {
-                    gap = 1, height = 1,
-                    ui.input { id = "search_input", bind = "query", placeholder = "Search..." },
-                    ui.button { id = "btn_submit", text = "Submit", on_click = "submit_query" },
-                },
-            },
-        }
-    end,
-}
+## 4. Input, Layout, Focus & Unicode Rules (v0.2.2)
+
+- **Editor key capture**: Active focused `input`, `textarea`, and active collection filter editing (`/`) consume typing and editing keys *before* global or ancestor `keymap` / `help` bindings. Typed runes like `'q'` or `'?'` no longer fall through to global hotkeys while editing.
+- **Grapheme-cluster correctness**: Text measurement (`TextWidth`), wrapping, truncation, `input`/`textarea` cursor movement, selection, and `char_limit` all count **Unicode grapheme clusters** via `uniseg` (so Cyrillic and multi-codepoint emoji stay intact).
+- **Modal focus isolation & Z-order mouse blocking**:
+  - Open modals trap keyboard focus traversal inside the modal scope.
+  - Sibling overlays with higher `z_index` block mouse clicks and scroll wheel pass-through to lower layers (such as underlying `scroll` containers).
+- **Read-only Draw & styled wrapping**: `Draw` does not mutate layout tree nodes (e.g., `scroll` computes bounds without mutating node props), and wrapped lines preserve spans cleanly by `[StartByte, EndByte)` byte offsets.
+
+---
+
+## 5. Embedded Lua Apps (`require("ui")`) & Safety Budgets
+
+Lua apps (`--app app.lua`, `RunApp`, `RunSource`, `QuickRun`, `Load`) run inside embedded `gopher-lua` with **no** `os`, `io`, or arbitrary `require` — only `require("ui")`.
+
+- `ui.panel { title = "...", ... }` already implies borders (`border = true` is optional).
+- Widget buttons with `label` fall back to `label` when `text` is absent.
+- **Transactional rollback**: if a Lua action errors or times out, LugoTUI restores `_G` globals, model `Data`, widget state, **and** Lua closure upvalues (`*lua.Upvalue`), while discarding uncommitted `HostEvent`s so `OnEvent` never observes rolled-back state.
+- **Built-in limits** (`internal/core` + `internal/engine`):
+  - Execution budgets: `250ms` init timeout, `50ms` action timeout, bounded expansion budget (`luaBudget`) and `string.rep` cap.
+  - Structural limits: `MaxNodes = 4096`, `MaxText = 1 MiB` (`1 << 20`), `MaxDepth = 64`, `MaxIDBytes = 128`, `MaxModelKeys = 1024`, `MaxValueDepth = 32`.
+
+---
+
+## 6. Runtime State, Background Tasks & Live Program Control
+
+Inside action handlers / `ViewFunc` (`rt *lugotui.Runtime`):
+- **Model access**: `Model`, `String`, `Int`, `Float`, `Bool`, `Strings`, `Map`, `Set`, `Update`, `AddInt`, `ToggleBool`, `Toggle`
+- **Focus & UI**: `Revision()`, `Focus()`, `SetFocus(id)`, `FocusDirection(dir)`, `FocusNext()`, `FocusPrev()`, `Quit()`, `Theme()`, `SetTheme(t)`, `Emit(action, payload)`, `On(action, handler)`
+- **Dynamic tree & JSON**: `Action(name, event)`, `Patch(id, props)`, `Replace(id, subtree)`, `ApplyJSON(data)`, `ReconcileTree(root)`, `State(id) WidgetState`
+- **Background tasks**:
+  - `StartTask(action string, work func(context.Context) (map[string]any, error)) (uint64, error)`
+  - `StartTaskNamed(name, action string, work func(context.Context) (map[string]any, error)) (uint64, error)`
+  - `StartTaskDebounced(name string, delay time.Duration, action string, work func(context.Context) (map[string]any, error)) (uint64, error)`
+  - `CancelTask(id uint64)`, `CancelTaskNamed(name string)`
+- **Headless testing / rendering**: `Layout(w, h)`, `Draw(screen, diagnostic)`, `Key(ev)`, `Mouse(ev)`, `Paste(text)`, `Tick(now)`, `NeedsTick()`, `Snapshot()`, `AgentReply(data)`
+
+From outside `p *lugotui.Program` (goroutine-safe control channel):
+- `p.Send(action, payload)`, `p.Set(key, val)`, `p.Patch(id, props)`, `p.Reload()`, `p.EnterAltScreen()`, `p.ExitAltScreen()`, `p.Quit()`
+
+---
+
+## 7. CLI Flags, Testing & JSON Lines IPC
+
+### CLI (`cmd/lugotui`)
+```bash
+lugotui --app app.lua                 # Run Lua app (default: embedded demo)
+lugotui --app app.lua --check         # Validate & render without terminal
+lugotui --app app.lua --snapshot      # Print semantic JSON snapshot (implies --check)
+lugotui --app app.lua --socket /tmp/app.sock
+lugotui --sandbox --app app.lua --check
+lugotui --version
 ```
+`--sandbox` enforces Linux `bubblewrap` + `prlimit` process isolation: requires a static `CGO_ENABLED=0` binary on Linux, regular `--app` file `<= 1 MiB`, no network or host filesystem access, and `--socket` is disabled.
 
-```go
-// main.go — same Go handlers work with Pure-Go view OR app.lua!
-p := lugo.NewProgram(
-	lugo.WithAppFile("app.lua"),
-	lugo.WithState("status_msg", "Ready"),
-	lugo.WithAction("submit_query", func(rt *lugo.Runtime, _ any) error {
-		return rt.Set("status_msg", "Searching: "+rt.String("query"))
-	}),
-)
-```
+### JSON Lines IPC Protocol (`--socket`, permissions `0600`)
+Each request/response is one JSON object per line:
+- **Snapshot**: `{"method":"snapshot"}` -> returns snapshot with `Revision`, `Focus`, `Nodes` (including `Bounds`), etc.
+- **Apply**: `{"method":"apply","packet":{"revision":N,"operations":[...]}}` -> revision-checked atomic `patch` / `replace` operations.
+- **Message**: `{"method":"message","action":"...","event":{...}}` -> dispatches an action.
+- **Events**: `{"method":"events"}` -> drains queued host events.
 
----
-
-## 5. Complete Pure-Go View Builder DSL Reference
-
-### Constructors
-- **Containers**:
-  - `Column(children ...*Node) *Node`
-  - `Row(children ...*Node) *Node`
-  - `Box(children ...*Node) *Node`
-  - `Panel(title string, children ...*Node) *Node` (sets `title`, `border: true`, `padding: 1`)
-  - `Scroll(children ...*Node) *Node`
-  - `Overlay(children ...*Node) *Node`
-  - `Modal(id, title string, children ...*Node) *Node` (sets `id`, `title`, `border: true`, `modal: true`)
-  - `Spacer() *Node` (`Box().Grow(1)`)
-- **Primitives & Text**:
-  - `Text(text string) *Node`
-  - `Textf(format string, args ...any) *Node`
-  - `Button(label string, onClick ...string) *Node`
-  - `Spinner(preset ...string) *Node` (presets: `"line"`, `"dot"`, `"mini_dot"`, `"jump"`, `"pulse"`, `"points"`, `"globe"`, `"moon"`, `"monkey"`, `"meter"`, `"hamburger"`, `"ellipsis"`)
-  - `Progress(percent float64) *Node` (`0.0` .. `1.0`)
-  - `Paginator(page, perPage, total int) *Node`
-  - `Timer(durationMs int, onTimeout ...string) *Node`
-  - `Stopwatch() *Node`
-  - `Help(bindings ...HelpBinding) *Node` (`HelpBinding{Keys: []string{"q"}, Description: "Quit"}`)
-  - `Cursor() *Node`
-  - `Custom(paintFn func(c Canvas)) *Node` — Custom canvas widget with local coordinate drawing (`SetCell`, `Print`, `LineH`, `LineV`, `Fill`, `Bounds`).
-- **Editors**:
-  - `Input(bindKey string) *Node` (supports `Ctrl+C`, `Ctrl+X`, `Ctrl+V`, `Ctrl+Z`, `Ctrl+Y`, `Ctrl+A`, `Shift+Arrow` selection)
-  - `Textarea(bindKey string) *Node`
-- **Collections**:
-  - `List(items ...string) *Node` (`.Filterable(true)` enables `/` live filtering)
-  - `Table(columns []TableColumn, rows [][]string) *Node` (`TableColumn{Title, Width, Align}`)
-  - `Tree(items ...TreeItem) *Node` (`TreeItem{ID, Text, Expanded, Children}`)
-  - `Viewport(text string, highlights ...HighlightSpan) *Node` (`HighlightSpan{Start, End}`)
-  - `Filepicker(entries ...FileEntry) *Node` (`FileEntry{ID, Text, Path, IsDir, Size, Permissions, Description}`)
-
-### Chainable `*Node` Methods
-- **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond)`, `.Focusable(bool)`
-- **Dimensions & Flex**: `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`, `.Grow(g)`, `.Shrink(s)`, `.Flex(g)`, `.Padding(p)`, `.Margin(m)`, `.Gap(g)`, `.Align(a)`, `.Justify(j)`, `.ZIndex(z)`, `.Absolute(left, top)`
-- **Appearance & Custom Borders**:
-  - `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Italic(bool)`, `.Underline(bool)`, `.Wrap(bool)`
-  - `.Border("rounded" | "double" | "thick" | "ascii" | "single" | bool)` — customizable border shapes
-  - `.BorderFG(color)`, `.BorderBG(color)`, `.BorderColor(fg, bg)`, `.TitleFG(color)` — dedicated border and title styling
-  - `.BorderGlyphs(BorderGlyphs)` — full custom 8-rune border glyph sets (`Top`, `Bottom`, `Left`, `Right`, `TopLeft`, `TopRight`, `BottomLeft`, `BottomRight`)
-- **Widget-Specific Styling**:
-  - **Button**: `.Plain()` (no brackets), `.Chevrons()` (`< text >`), `.Parens()` (`( text )`), `.Filled()` (solid background block), `.Prefix(s)`, `.Suffix(s)`
-  - **List & Table**: `.CursorPrefix("❯ ")`, `.SelectedFG(color)`, `.SelectedBG(color)`, `.SelectedBold(bool)`
-- **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Modal(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.PageSize(n)`
-- **Events & Named Actions**: `.OnClick(action)`, `.OnChange(action)`, `.OnSubmit(action)`, `.OnSelect(action)`, `.OnTimeout(action)`, `.Key(chord, action)`, `.Keymap(map[string]string)`
-- **Zero-Boilerplate Inline Closures (Bubble Tea Killer)**:
-  - `.OnClickDo(func())` / `.OnClickErr(func() error)` — inline click handler without registering action names
-  - `.OnChangeText(func(newText string))` — live input text change closure
-  - `.OnSubmitText(func(submittedText string))` — input enter/submit closure
-  - `.OnSelectItem(func(index int, value any))` — list selection closure
-  - `.KeyDo(chord, func())` / `.KeyErr(chord, func() error)` — widget or container hotkey closure (automatically bubbles up container hierarchy)
-  - `.OnRawKey(func(e *tcell.EventKey) bool)` — low-level keyboard event interception (returns true to consume)
-  - `.OnPaint(func(c Canvas))` — custom canvas drawing pass
-
----
-
-## 6. Program Options, Middleware, & External Control
-
-### Functional `Option` Builders
-- **Source / View**: `WithView(node)`, `WithViewFunc(fn)`, `WithAppFile(path)`, `WithSource(luaCode)`
-- **State & Actions**: `WithState(key, val)`, `WithInitialData(map)`, `WithAction(name, fn)`, `WithHandlers(map)`, `WithOnEvent(fn)`, `WithOnReady(fn)`
-- **Extensibility Hooks**:
-  - `WithMiddleware(mw ...EventMiddleware)` — intercept, log, or short-circuit events
-  - `WithInputFilter(func(tcell.Event) tcell.Event)` — rewrite or drop raw terminal events before processing
-  - `WithStateObserver(func(key string, oldVal, newVal any))` — observe state changes
-  - `WithRenderer(Renderer)` / `WithRendererFunc(fn)` — custom frame rendering hook
-  - `WithClipboard(Clipboard)` — custom clipboard (defaults to `OSC52Clipboard`)
-- **Terminal & Runtime Modes**:
-  - `WithAltScreen(bool)` — fullscreen alternate buffer (default `true` unless inline)
-  - `WithInline(height int)` — inline rendering inside primary terminal buffer without clearing history
-  - `WithMouse(bool)`, `WithPaste(bool)`, `WithFPS(fps int)`, `WithTheme(Theme)`
-  - `WithSocket(path)`, `WithSandbox()`, `WithCheck()`, `WithSnapshot()`, `WithoutPanicRecovery()`
-
-### Thread-Safe External Control on `*Program`
-Call from any goroutine while `p.Run()` is active:
-- `p.Send(action string, payload map[string]any) error`
-- `p.Set(key string, value any) error`
-- `p.Patch(id string, props map[string]any) error`
-- `p.Reload() error`
-- `p.EnterAltScreen() error` / `p.ExitAltScreen() error`
-- `p.Quit()`
-
-### Typed State Helpers on `*Runtime`
-- `rt.String(key, [fallback]) string`, `rt.Int(key, [fallback]) int`, `rt.Float(key, [fallback]) float64`, `rt.Bool(key, [fallback]) bool`
-- `rt.Strings(key) []string`, `rt.Map(key) map[string]any`, `rt.Model(key) any`
-- `rt.Set(key, val) error`, `rt.Update(patch map[string]any) error`, `rt.AddInt(key, delta) error`, `rt.ToggleBool(key) error`, `rt.Toggle(key) bool`
-- `rt.Quit() error` (returns `lugotui.ErrQuit` to exit cleanly), `rt.On(action, handler) *Runtime`
-- `rt.Patch(id, props) error`, `rt.Replace(id, subtree) error`, `rt.ReconcileTree(root) error`
-
----
-
-## 7. Lua API Reference (When Using `.lua` Views)
-
-- **State & Tree**: `ui.get(key)`, `ui.set(key, val)`, `ui.patch(id, props)`, `ui.patch_all(table)`, `ui.replace(id, node)`
-- **Focus**: `ui.focus(id)`, `ui.focused()`, `ui.focus_next()`, `ui.focus_prev()`, `ui.focus_direction("up"|"down"|"left"|"right")`
-- **Clipboard & Screen**: `ui.clipboard_get()`, `ui.clipboard_set(text)`, `ui.enter_alt_screen()`, `ui.exit_alt_screen()`
-- **Host Dispatch**: `host.dispatch(action, payload, [opts])` (pass `{ debounce = true }` to coalesce rapid events)
-
----
-
-## 8. Headless Testing & Verification
-
-Test Pure-Go or Lua interfaces in milliseconds without a real TTY:
-
-```go
-func TestCounter(t *testing.T) {
-	rt, err := lugo.LoadViewFunc(
-		func(r *lugo.Runtime) *lugo.Node {
-			return lugo.Column(
-				lugo.Textf("Count: %d", r.Int("n")).SetID("lbl"),
-				lugo.Button("+1", "inc").SetID("btn"),
-			)
-		},
-		lugo.WithState("n", 1),
-		lugo.WithAction("inc", func(r *lugo.Runtime, _ any) error {
-			return r.AddInt("n", 1)
-		}),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rt.Close()
-
-	_ = rt.Action("inc", nil)
-	if rt.Int("n") != 2 {
-		t.Fatalf("expected 2, got %d", rt.Int("n"))
-	}
-}
-```
+Exported protocol error codes (`lugotui.ErrorCode(err)`): `CodeInvalidJSON`, `CodeUnknownCommand`, `CodeValidationError`, `CodeRevisionConflict`, `CodeLuaError`, `CodeTaskLimitExceeded`, `CodeInternalError`.
