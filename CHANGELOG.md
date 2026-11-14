@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-11-14
+
+### Changed
+- **Modular Text & Core Packages**: Extracted Unicode/grapheme text processing into `internal/text` (`TextWidth`, `Graphemes`, `Truncate`, `Lines`, `LimitedLines`, `WrapLines`) and core geometry, themes, borders, value limits, directional sides, and tree utilities into `internal/core`.
+- **Hot-Path Allocation Reductions**: Eliminated intermediate buffer allocations and quadratic string concatenation in text wrapping (`WrapLines`), added zero-allocation generic slice handling in `PropSides`, and added early-exit byte-limit checks in `ValidateModel`, reducing `BenchmarkLayout` heap allocations from 154 to 39 allocs/op.
+
+### Fixed
+- **Wrapped Span Offsets & Atomic Cursor**: Bound rich-text `spans` rendering to exact source byte ranges (`[StartByte, EndByte)`), positioned the hardware cursor atomically before `screen.Show()`, and skipped `Show()` when both frame cells and cursor state are unchanged.
+- **Pure Layout & Scroll Clamping**: Removed tree mutations during `Draw` by computing `ScrollExtent` inside `Layout` (`place`) and separating `applyScroll` clamping; added `label` fallback in text resolution for buttons and widgets.
+- **Full Lua Transaction Upvalue Rollback**: Snapshotted and restored closure upvalues (including nested/cyclic tables) alongside `_G` globals when an action or commit fails.
+- **Editor Key Capture & Overlay Wheel Isolation**: Routed active `input`, `textarea`, and collection filter typing ahead of global/scope `keymap` and `help` bindings while preserving non-editor shortcuts and widget hooks, and scoped mouse wheel scroll targets to active `z_index` subtrees so sibling overlays block wheel pass-through.
+- **GoActions With Middlewares**: Preserved `Options.Actions` (`GoActions`) in `toRunnerOptions` when `WithMiddleware` is also configured.
+
 ## [0.2.1] - 2026-11-13
 
 ### Changed
