@@ -259,11 +259,18 @@ func loadRuntime(source, chunkName string, old *Runtime) (*Runtime, error) {
 	}))
 	L.SetField(ui, "set", L.NewFunction(func(L *lua.LState) int {
 		key := L.CheckString(1)
+		if key == "" {
+			L.RaiseError("empty model key")
+		}
 		v, e := luaPlain(L.Get(2), 0)
 		if e != nil {
 			L.RaiseError("%s", e)
 		}
-		r.Data[key] = v
+		if v == nil {
+			delete(r.Data, key)
+		} else {
+			r.Data[key] = v
+		}
 		return 0
 	}))
 	L.SetField(ui, "clipboard_get", L.NewFunction(func(L *lua.LState) int {

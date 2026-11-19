@@ -11,18 +11,18 @@ import (
 	"path/filepath"
 )
 
-func isDynamicallyLinkedELF(path string) bool {
+func isDynamicallyLinkedELF(path string) (bool, error) {
 	f, err := elf.Open(path)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer f.Close()
 	for _, p := range f.Progs {
 		if p.Type == elf.PT_INTERP {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func runPlatformSandbox(options Options) error {
@@ -45,7 +45,11 @@ func runPlatformSandbox(options Options) error {
 	if err != nil {
 		return err
 	}
-	if isDynamicallyLinkedELF(binary) {
+	dyn, err := isDynamicallyLinkedELF(binary)
+	if err != nil {
+		return fmt.Errorf("sandbox failed to inspect executable: %w", err)
+	}
+	if dyn {
 		return errors.New("sandbox requires a static binary (build with CGO_ENABLED=0); current executable is dynamically linked")
 	}
 	args := []string{

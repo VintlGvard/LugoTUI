@@ -77,7 +77,6 @@ func TestPureGoRetainedViewAndActions(t *testing.T) {
 		t.Fatalf("expected label = 'Count: 15', got %q", got)
 	}
 
-	// Verify transactional rollback when Go action returns error.
 	if err := rt.Action("fail_act", nil); err == nil {
 		t.Fatal("expected fail_act to return error")
 	}
@@ -135,8 +134,6 @@ func TestPureGoReactiveViewFuncPreservesFocusAndState(t *testing.T) {
 	sim.SetSize(80, 24)
 	rt.Draw(sim, "")
 
-	// Type into search input; reactive ViewFunc should automatically update header text
-	// while keeping focus and cursor inside "search".
 	for _, ch := range "hello" {
 		if err := rt.Key(tcell.NewEventKey(tcell.KeyRune, ch, tcell.ModNone)); err != nil {
 			t.Fatalf("Key(%q): %v", ch, err)
@@ -156,7 +153,6 @@ func TestPureGoReactiveViewFuncPreservesFocusAndState(t *testing.T) {
 		t.Fatal("expected details_panel hidden initially")
 	}
 
-	// Trigger toggle action; details_panel should appear in the reconciled tree.
 	if err := rt.Action("toggle", nil); err != nil {
 		t.Fatalf("Action(toggle): %v", err)
 	}
@@ -288,7 +284,6 @@ func TestInlineActionClosuresAndBuilderProps(t *testing.T) {
 	sim.SetSize(80, 24)
 	rt.Draw(sim, "")
 
-	// Check Help description rendered onto screen ("q QuitApp")
 	helpFound := false
 	for y := 0; y < 24; y++ {
 		var row strings.Builder
@@ -305,7 +300,6 @@ func TestInlineActionClosuresAndBuilderProps(t *testing.T) {
 		t.Fatal("expected Help widget to render 'q QuitApp'")
 	}
 
-	// Type into masked input with MaxLength(8)
 	for _, ch := range "1234567890" {
 		if err := rt.Key(tcell.NewEventKey(tcell.KeyRune, ch, tcell.ModNone)); err != nil {
 			t.Fatalf("Key(%q): %v", ch, err)
@@ -324,7 +318,6 @@ func TestInlineActionClosuresAndBuilderProps(t *testing.T) {
 		t.Fatalf("expected OnSubmitText '12345678', got %q", submittedText)
 	}
 
-	// Select item in list
 	if err := rt.SetFocus("lst"); err != nil {
 		t.Fatalf("SetFocus(lst): %v", err)
 	}
@@ -338,7 +331,6 @@ func TestInlineActionClosuresAndBuilderProps(t *testing.T) {
 		t.Fatalf("expected OnSelectItem (2, 'second'), got (%d, %v)", selectedIdx, selectedVal)
 	}
 
-	// Click button via Enter
 	if err := rt.SetFocus("btn"); err != nil {
 		t.Fatalf("SetFocus(btn): %v", err)
 	}
@@ -349,7 +341,6 @@ func TestInlineActionClosuresAndBuilderProps(t *testing.T) {
 		t.Fatalf("expected count=1 after OnClickDo, got %d", got)
 	}
 
-	// Trigger KeyDo("t") to open modal with Absolute(2, 1)
 	if err := rt.Key(tcell.NewEventKey(tcell.KeyRune, 't', tcell.ModNone)); err != nil {
 		t.Fatalf("Key 't': %v", err)
 	}
@@ -357,7 +348,6 @@ func TestInlineActionClosuresAndBuilderProps(t *testing.T) {
 		t.Fatal("expected modal 'dlg' visible after KeyDo('t')")
 	}
 
-	// Test dynamic Update, Strings, Map, Float
 	if err := rt.Update(map[string]any{
 		"ratio": 3.5,
 		"tags":  []string{"go", "lua"},
@@ -429,8 +419,6 @@ func TestErrQuitExitsProgramCleanly(t *testing.T) {
 }
 
 func TestHybridLuaWithoutBoilerplateActions(t *testing.T) {
-	// Notice: no `actions = { ... }` table in Lua at all!
-	// `on_click = "ping"` dispatches directly to Go WithHandlers.
 	const luaTemplate = `
 return {
   view = {

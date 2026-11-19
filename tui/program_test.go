@@ -555,3 +555,46 @@ func TestProgramPreservesGoActionsAndMiddlewaresTogether(t *testing.T) {
 		t.Fatalf("expected actionCalls=1 and mwCalls=1, got action=%d mw=%d", actionCalls.Load(), mwCalls.Load())
 	}
 }
+
+func TestProgramReloadPreservesPureGoViewFuncAndStaticView(t *testing.T) {
+	for _, reactive := range []bool{true, false} {
+		sim := tcell.NewSimulationScreen("UTF-8")
+		if err := sim.Init(); err != nil {
+			t.Fatal(err)
+		}
+		sim.SetSize(40, 6)
+
+		ready := make(chan struct{})
+		var opts []tui.Option
+		if reactive {
+			opts = append(opts, tui.WithViewFunc(func(rt *tui.Runtime) *tui.Node {
+				return tui.Textf("N=%d", rt.Int("n")).SetID("lbl")
+			}))
+		} else {
+			opts = append(opts, tui.WithView(tui.Text("Static").SetID("lbl")))
+		}
+		opts = append(opts,
+			tui.WithScreen(sim),
+			tui.WithState("n", 7),
+			tui.WithOnReady(func(_ *tui.Runtime) { close(ready) }),
+		)
+		p := tui.NewProgram(opts...)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- p.Run()
+		}()
+		<-ready
+
+		if err := p.Reload(); err != nil {
+			t.Fatalf("Reload(reactive=%v) failed: %v", reactive, err)
+		}
+		sim.InjectKey(tcell.KeyF5, 0, tcell.ModNone)
+		if err := p.Set("n", 9); err != nil {
+			t.Fatalf("Set after F5 reload(reactive=%v) failed: %v", reactive, err)
+		}
+		p.Quit()
+		if err := <-errCh; err != nil {
+			t.Fatalf("Program.Run(reactive=%v) error: %v", reactive, err)
+		}
+	}
+}

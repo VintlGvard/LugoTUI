@@ -130,7 +130,9 @@ func LoadNode(root *Node, data map[string]any, goActions map[string]func(*Runtim
 		GoActions:        cloneGoActions(goActions),
 		AllowHostActions: allowHostActions,
 	}
-	r.bindInlineActions(clonedRoot)
+	if err := r.bindInlineActions(clonedRoot); err != nil {
+		return nil, err
+	}
 	if err := sanitizeGoTreeProps(clonedRoot); err != nil {
 		return nil, err
 	}
@@ -194,7 +196,9 @@ func (r *Runtime) reconcileRoot(next *Node) error {
 	AutoAssignIDs(cloned)
 	candidate := *r
 	candidate.GoActions = cloneGoActions(r.GoActions)
-	candidate.bindInlineActions(cloned)
+	if err := candidate.bindInlineActions(cloned); err != nil {
+		return err
+	}
 	if err := sanitizeGoTreeProps(cloned); err != nil {
 		return err
 	}
@@ -224,10 +228,21 @@ func (r *Runtime) syncBoundWidgets() {
 	for id, n := range r.Nodes {
 		if n.Type == "input" || n.Type == "textarea" {
 			if key := str(n, "bind", ""); key != "" {
-				if v, ok := r.Data[key].(string); ok && v != r.State[id].Value {
-					r.State[id].Value = v
-					r.State[id].Cursor = min(r.State[id].Cursor, len(graphemes(v)))
-					r.State[id].Anchor = -1
+				s := r.State[id]
+				if s == nil {
+					continue
+				}
+				raw, exists := r.Data[key]
+				if !exists || raw == nil {
+					if s.Value != "" {
+						s.Value = ""
+						s.Cursor = 0
+						s.Anchor = -1
+					}
+				} else if v, ok := raw.(string); ok && v != s.Value {
+					s.Value = v
+					s.Cursor = max(0, min(s.Cursor, len(graphemes(v))))
+					s.Anchor = -1
 				}
 			}
 		}
@@ -431,8 +446,11 @@ func (r *Runtime) ToggleBool(key string) error {
 }
 
 func (r *Runtime) Toggle(key string) bool {
-	next := !r.Bool(key)
-	_ = r.Set(key, next)
+	current := r.Bool(key)
+	next := !current
+	if err := r.Set(key, next); err != nil {
+		return current
+	}
 	return next
 }
 
@@ -444,11 +462,19 @@ func (r *Runtime) Reload(source string) (*Runtime, error) {
 	if r.isClosed() {
 		return nil, errors.New("runtime closed")
 	}
-	if source == "" && r.ViewFunc != nil {
-		if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
-			return nil, err
+	if source == "" {
+		if r.ViewFunc != nil {
+			if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+				return nil, err
+			}
+			return r, nil
 		}
-		return r, nil
+		if r.L == nil && r.Root != nil {
+			if err := r.reconcileRoot(r.Root); err != nil {
+				return nil, err
+			}
+			return r, nil
+		}
 	}
 	return loadRuntime(source, r.ChunkName, r)
 }
@@ -457,11 +483,19 @@ func (r *Runtime) ReloadNamed(source, chunkName string) (*Runtime, error) {
 	if r.isClosed() {
 		return nil, errors.New("runtime closed")
 	}
-	if source == "" && r.ViewFunc != nil {
-		if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
-			return nil, err
+	if source == "" {
+		if r.ViewFunc != nil {
+			if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+				return nil, err
+			}
+			return r, nil
 		}
-		return r, nil
+		if r.L == nil && r.Root != nil {
+			if err := r.reconcileRoot(r.Root); err != nil {
+				return nil, err
+			}
+			return r, nil
+		}
 	}
 	return loadRuntime(source, chunkName, r)
 }
@@ -487,7 +521,7 @@ func Demo() string { return assets.DemoSource }
 
 func (r *Runtime) restore(old *Runtime) {
 	for id, n := range r.Nodes {
-		s := &WidgetState{Anchor: -1, Value: str(n, "text", "")}
+		s := &WidgetState{Anchor: -1, Value: str(n, "text", ""), Selected: max(0, int(num(n, "selected", 0)))}
 		if n.Type != "input" && n.Type != "textarea" {
 			s.Value = ""
 		}
@@ -506,8 +540,15 @@ func (r *Runtime) restore(old *Runtime) {
 		if b := str(n, "bind", ""); b != "" {
 			if v, ok := r.Data[b].(string); ok {
 				s.Value = v
-			} else {
-				r.Data[b] = s.Value
+				s.Cursor = max(0, min(s.Cursor, len(graphemes(v))))
+			} else if _, exists := r.Data[b]; !exists {
+				if old != nil && old.Nodes[id] != nil && str(old.Nodes[id], "bind", "") == b {
+					s.Value = ""
+					s.Cursor = 0
+					s.Anchor = -1
+				} else {
+					r.Data[b] = s.Value
+				}
 			}
 		}
 	}
@@ -698,7 +739,9 @@ func (r *Runtime) Commit() error {
 	}
 	candidate := *r
 	candidate.GoActions = cloneGoActions(r.GoActions)
-	candidate.bindInlineActions(root)
+	if e := candidate.bindInlineActions(root); e != nil {
+		return operationError(e)
+	}
 	ids, e := validateTree(root)
 	if e != nil {
 		return operationError(e)
@@ -743,9 +786,9 @@ func (r *Runtime) Commit() error {
 			return fmt.Errorf("ui.focus: invalid focus: %s (hidden ancestor)", id)
 		}
 		candidate.Focus = id
-		if r.modalID != "" {
+		if candidate.modalID != "" {
 			insideModal := false
-			if modal := candidate.Nodes[r.modalID]; modal != nil {
+			if modal := candidate.Nodes[candidate.modalID]; modal != nil {
 				for node := range ordered(modal) {
 					if node == n {
 						insideModal = true
@@ -755,6 +798,7 @@ func (r *Runtime) Commit() error {
 			}
 			if !insideModal {
 				candidate.PreviousFocus = id
+				candidate.ReconcileFocus()
 			}
 		}
 	}
@@ -773,6 +817,15 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 	if !r.hasAction(name) {
 		return fmt.Errorf("unknown action %s", name)
 	}
+	oldRoot := r.Root
+	oldNodes := r.Nodes
+	oldState := r.State
+	oldRevision := r.Revision
+	oldLayoutValid := r.layoutValid
+	oldAltScreen := r.AltScreen
+	oldInline := r.Inline
+	oldInlineHeight := r.InlineHeight
+	oldGoActions := cloneGoActions(r.GoActions)
 	oldFocus := r.Focus
 	oldPrevious := r.PreviousFocus
 	oldModal := r.modalID
@@ -787,6 +840,15 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 	defer func() {
 		r.inAction = false
 		if !committed {
+			r.Root = oldRoot
+			r.Nodes = oldNodes
+			r.State = oldState
+			r.Revision = oldRevision
+			r.layoutValid = oldLayoutValid
+			r.AltScreen = oldAltScreen
+			r.Inline = oldInline
+			r.InlineHeight = oldInlineHeight
+			r.GoActions = oldGoActions
 			r.Data = oldData
 			restoreLuaState(r.L, oldSnap)
 			r.PreviousFocus = oldPrevious
@@ -843,7 +905,7 @@ func (r *Runtime) Action(name string, event map[string]any) error {
 		}
 	}
 	r.syncBoundWidgets()
-	r.Revision++
+	r.Revision = oldRevision + 1
 	committed = true
 	if len(r.StateObservers) > 0 {
 		for k, v := range r.Data {
@@ -945,7 +1007,11 @@ func snapshotLuaState(L *lua.LState, actions *lua.LTable) luaStateSnapshot {
 				return
 			}
 			visitedTables[x] = struct{}{}
-			x.ForEach(func(_, val lua.LValue) {
+			if x.Metatable != nil && x.Metatable != lua.LNil {
+				collect(x.Metatable, depth+1)
+			}
+			x.ForEach(func(k, val lua.LValue) {
+				collect(k, depth+1)
 				collect(val, depth+1)
 			})
 		}

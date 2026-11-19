@@ -348,3 +348,103 @@ func TestTimerStopwatchPropagateAndRollbackOnChangeError(t *testing.T) {
 		t.Fatal("stopwatch running state was not rolled back after failed on_change")
 	}
 }
+
+func TestTimerStopwatchPausePersistsAcrossDrawAndTick(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(30, 5)
+
+	r, err := Load(`return {
+  view = {
+    type = "column",
+    id = "root",
+    { type = "timer", id = "tm", duration = 5000, running = true },
+    { type = "stopwatch", id = "sw", running = true }
+  }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	epoch := time.Now()
+	for _, id := range []string{"tm", "sw"} {
+		if err := r.SetFocus(id); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Key(tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone)); err != nil {
+			t.Fatal(err)
+		}
+		r.Draw(screen, "")
+		if r.primitive(r.Nodes[id]).Running {
+			t.Fatalf("%s did not remain paused after Draw", id)
+		}
+	}
+	if r.NeedsTick() {
+		t.Fatal("NeedsTick should be false when both timer and stopwatch are paused")
+	}
+	if err := r.Tick(epoch); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Tick(epoch.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if r.primitive(r.Nodes["tm"]).Elapsed != 0 || r.primitive(r.Nodes["sw"]).Elapsed != 0 {
+		t.Fatal("paused clocks advanced during Tick after Draw")
+	}
+}
+
+func TestProgressPercentFormatValidationAndHelpToggle(t *testing.T) {
+	for _, badFmt := range []string{"%999999999.0f", "%100f", "%.100f", "%s", "%f %f", "%*[1]f", "%"} {
+		_, n := primitiveTestRuntime("progress", map[string]any{"percent_format": badFmt})
+		if validatePrimitive(n) == nil {
+			t.Fatalf("unsafe percent_format %q was accepted", badFmt)
+		}
+	}
+	_, okNode := primitiveTestRuntime("progress", map[string]any{"percent_format": " %3.0f%%"})
+	if err := validatePrimitive(okNode); err != nil {
+		t.Fatalf("valid percent_format rejected: %v", err)
+	}
+
+	r, err := Load(`return {
+  view = {
+    type = "column",
+    id = "root",
+    { type = "help", id = "h", keys = { { keys = {"Space"}, help = "go", action = "go" }, { keys = {"?"}, help = "qmark", action = "qm" } } },
+    { type = "text", id = "after", text = "tail" }
+  },
+  actions = {
+    go = function() host.dispatch("space_act", {}) end,
+    qm = function() host.dispatch("qmark_act", {}) end
+  }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Key(tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone)); err != nil {
+		t.Fatal(err)
+	}
+	if ev := r.DrainEvents(); len(ev) != 1 || ev[0].Action != "space_act" {
+		t.Fatalf("expected space_act from help binding, got %+v", ev)
+	}
+
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(40, 10)
+	r.Draw(screen, "")
+	yBefore := r.Nodes["after"].Rect.Y
+	if handled, err := r.keyPrimitive(r.Nodes["h"], tcell.NewEventKey(tcell.KeyRune, '?', tcell.ModNone)); !handled || err != nil {
+		t.Fatalf("help ? toggle failed: %v %v", handled, err)
+	}
+	r.Draw(screen, "")
+	if r.Nodes["after"].Rect.Y <= yBefore {
+		t.Fatalf("help layout did not expand after ? toggle: before=%d after=%d", yBefore, r.Nodes["after"].Rect.Y)
+	}
+}

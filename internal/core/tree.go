@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 func FindNode(root *Node, id string) *Node {
@@ -32,12 +33,21 @@ func CloneNode(n *Node) *Node {
 		return nil
 	}
 	c := *n
-	c.Props = maps.Clone(n.Props)
-	if c.Props == nil {
+	c.LinesCache = nil
+	c.LinesCacheValid = false
+	if len(n.Props) > 0 {
+		c.Props = make(map[string]any, len(n.Props))
+		for k, val := range n.Props {
+			if cloned, err := CloneValue(val); err == nil {
+				c.Props[k] = cloned
+			} else if m, ok := val.(map[string]any); ok {
+				c.Props[k] = maps.Clone(m)
+			} else {
+				c.Props[k] = val
+			}
+		}
+	} else {
 		c.Props = make(map[string]any)
-	}
-	if km, ok := n.Props["keymap"].(map[string]any); ok {
-		c.Props["keymap"] = maps.Clone(km)
 	}
 	c.InlineActions = maps.Clone(n.InlineActions)
 	c.Children = make([]*Node, len(n.Children))
@@ -110,6 +120,17 @@ func VisibleNodes(n *Node) iter.Seq[*Node] {
 	}
 }
 
+func truncateUTF8Suffix(s string, maxBytes int) string {
+	if len(s) <= maxBytes || maxBytes <= 0 {
+		return s
+	}
+	start := len(s) - maxBytes
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
+}
+
 func AutoAssignIDs(root *Node) {
 	if root == nil {
 		return
@@ -151,6 +172,10 @@ func AutoAssignIDs(root *Node) {
 					suffix = n.Type + "_" + act
 				}
 				base = parentID + "." + suffix
+			}
+			const maxBaseBytes = MaxIDBytes - 12
+			if len(base) > maxBaseBytes {
+				base = truncateUTF8Suffix(base, maxBaseBytes)
 			}
 			candidate := base
 			for seq := 2; used[candidate]; seq++ {
@@ -201,6 +226,16 @@ func validateSidesProp(v any, key string) error {
 			}
 		}
 		return nil
+	case []float64:
+		if len(x) == 0 || len(x) > 4 {
+			return fmt.Errorf("invalid %s", key)
+		}
+		for _, val := range x {
+			if err := checkNum(val); err != nil {
+				return err
+			}
+		}
+		return nil
 	case []any:
 		if len(x) == 0 || len(x) > 4 {
 			return fmt.Errorf("invalid %s", key)
@@ -228,6 +263,17 @@ func validateBorderMap(m map[string]any) error {
 		}
 	}
 	return nil
+}
+
+func requiresNodeID(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Type {
+	case "input", "textarea", "button", "list", "scroll", "table", "viewport", "tree", "filepicker", "spinner", "progress", "paginator", "timer", "stopwatch", "help", "cursor":
+		return true
+	}
+	return Focusable(n) || Flag(n, "modal")
 }
 
 func ValidateTree(root *Node, validators ...func(*Node) error) (map[string]*Node, error) {
@@ -263,7 +309,7 @@ func ValidateTree(root *Node, validators ...func(*Node) error) (map[string]*Node
 			}
 			ids[n.ID] = n
 		}
-		if (Focusable(n) || Flag(n, "modal") || n.Type == "scroll" || n.Type == "spinner" || n.Type == "progress" || n.Type == "cursor") && n.ID == "" {
+		if requiresNodeID(n) && n.ID == "" {
 			return fmt.Errorf("%s requires id", n.Type)
 		}
 		for k, v := range n.Props {
@@ -309,7 +355,7 @@ func ValidateTree(root *Node, validators ...func(*Node) error) (map[string]*Node
 				if v != "absolute" && v != "relative" {
 					return errors.New("invalid position")
 				}
-			case "text", "title", "bind", "source", "on_submit", "on_change", "on_select", "on_click", "on_key", "fg", "bg", "wrap", "nav_up", "nav_down", "nav_left", "nav_right", "border_style", "border_fg", "border_bg", "border_color", "title_fg", "cursor_prefix", "button_style", "prefix", "suffix", "selected_fg", "selected_bg":
+			case "text", "title", "bind", "source", "on_submit", "on_change", "on_select", "on_click", "on_key", "fg", "bg", "wrap", "nav_up", "nav_down", "nav_left", "nav_right", "border_style", "border_fg", "border_bg", "border_color", "title_fg", "cursor_prefix", "button_style", "prefix", "suffix", "selected_fg", "selected_bg", "backdrop", "current_dir", "path":
 				if _, ok := v.(string); !ok {
 					return fmt.Errorf("%s must be string", k)
 				}
@@ -344,9 +390,18 @@ func ValidateTree(root *Node, validators ...func(*Node) error) (map[string]*Node
 					return errors.New("border_glyphs must be BorderGlyphs")
 				}
 			case "hidden", "disabled", "bold", "modal", "spatial_nav", "selected_bold", "focusable", "show_cursor",
-				"border_top", "border_right", "border_bottom", "border_left":
+				"border_top", "border_right", "border_bottom", "border_left",
+				"close_on_esc", "multi_select", "show_icons":
 				if _, ok := v.(bool); !ok {
 					return fmt.Errorf("%s must be boolean", k)
+				}
+			case "item_height":
+				if f, ok := FloatVal(v); !ok || !Finite(f) || f < 1 || f > 1e6 || math.Trunc(f) != f {
+					return errors.New("invalid item_height")
+				}
+			case "selected":
+				if f, ok := FloatVal(v); !ok || !Finite(f) || f < 0 || f > 1e6 || math.Trunc(f) != f {
+					return errors.New("invalid selected")
 				}
 			case "nav":
 				m, ok := v.(map[string]any)

@@ -45,17 +45,17 @@ LugoTUI provides a type-safe, fluent Go API (`github.com/VintlGvard/LugoTUI` or 
   - `Map[T any](items []T, fn func(i int, item T) *Node) []*Node`
 
 ### Fluent Chainable `*Node` Methods
-- **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond)`, `.Focusable(bool)`
+- **Identity & Binding**: `.SetID(id)`, `.Bind(key)`, `.Prop(key, val)`, `.Add(children...)`, `.When(cond, fn)`, `.Focusable(bool)`
 - **Dimensions & Flex**: `.Width(w)`, `.Height(h)`, `.Size(w, h)`, `.MinWidth(w)`, `.MaxWidth(w)`, `.MinHeight(h)`, `.MaxHeight(h)`, `.Grow(g)`, `.Shrink(s)`, `.Flex(g)`, `.Padding(p)`, `.Margin(m)`, `.Gap(g)`, `.Align(a)`, `.Justify(j)`, `.ZIndex(z)`, `.Absolute(left, top)`
 - **Appearance & Custom Borders**:
-  - `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Italic(bool)`, `.Underline(bool)`, `.Wrap(bool)`
+  - `.Text(s)`, `.Title(s)`, `.Placeholder(s)`, `.FG(color)`, `.BG(color)`, `.Color(fg, bg)`, `.Bold(bool)`, `.Wrap(bool)`
   - `.Border("rounded" | "double" | "thick" | "ascii" | "single" | bool)` — customizable border shapes
   - `.BorderFG(color)`, `.BorderBG(color)`, `.BorderColor(fg, bg)`, `.TitleFG(color)` — dedicated border and title styling
   - `.BorderGlyphs(BorderGlyphs)` — full custom 8-rune border glyph sets (`Top`, `Bottom`, `Left`, `Right`, `TopLeft`, `TopRight`, `BottomLeft`, `BottomRight`)
 - **Widget-Specific Styling**:
   - **Button**: `.Plain()` (no brackets), `.Chevrons()` (`< text >`), `.Parens()` (`( text )`), `.Filled()` (solid background block), `.Prefix(s)`, `.Suffix(s)`
   - **List & Table**: `.CursorPrefix("❯ ")`, `.SelectedFG(color)`, `.SelectedBG(color)`, `.SelectedBold(bool)`
-- **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Modal(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.PageSize(n)`
+- **Behavior & State**: `.Hidden(bool)`, `.Disabled(bool)`, `.Modal(bool)`, `.Masked(bool)`, `.MaxLength(n)`, `.Filterable(bool)`, `.ShowHeader(bool)`, `.ShowLineNumbers(bool)`, `.SoftWrap(bool)`, `.Page(page, perPage, total)`
 - **Zero-Boilerplate Inline Closures**:
   - `.OnClickDo(func())` / `.OnClickErr(func() error)` — inline button click handler
   - `.OnChangeText(func(text string))` — live text input change handler
@@ -162,7 +162,7 @@ return {
 ### Action Transactions & Reload Semantics
 
 - **Transactional consistency:** Action transactions cover UI modifications, model state, queued host events, and focus only. These commit together atomically or roll back cleanly on failure.
-- **State migration across reload:** Lua globals and closure upvalues are not rolled back and are not migrated on reload. Keep persistent application state in the explicit model (`ui.get` / `ui.set`).
+- **State migration across reload:** Lua globals and closure upvalues are rolled back on failed actions, but are not migrated across reloads. Keep persistent application state in the explicit model (`ui.get` / `ui.set`).
 - **Input preservation:** Editor keystrokes remain valid user input even when an `on_change` callback fails. Stable `(id, type)` pairs preserve editor state (cursor, scroll, text) across reloads.
 - **Data binding:** Bind editor strings with `bind`; bind list arrays with `source`.
 - **Event signatures:** Callbacks receive events exposing `id`, `value`, and one-based `index` where applicable.
@@ -198,7 +198,7 @@ Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event l
 - `ui.row`: Flex container with `direction = 'row'`.
 - `ui.column`: Flex container with `direction = 'column'`.
 - `ui.panel`: Box styled with title and container background.
-- `ui.text`: Text display supporting `bind`, `spans`, alignment, and `wrap = 'none'`.
+- `ui.text`: Text display supporting `bind`, `spans`, and `wrap = 'none'`.
 - `ui.button`: Clickable button with `text`, `on_click` action name, and focus handling.
 - `ui.scroll`: Scrollable container.
 - `ui.overlay`: Floating container placed above standard layout flow.
@@ -206,7 +206,7 @@ Widgets use LugoTUI nodes, Lua actions, and retained state. No secondary event l
 ### Collections
 - **`ui.table`:** Data table with `columns = {{ title = 'Name', width = 20, align = 'left'|'center'|'right' }}` and `rows = {{ 'Example' }}` or cell objects `{{ { text = '42', align = 'right', fg = 'green', bg = 'black', bold = true } }}`. Supports horizontal scrolling, Vim keys (`j` / `k` / `g` / `G`), `on_select` (row activation), and `on_change` (row selection change).
 - **`ui.tree`:** Hierarchical tree widget with nested `{ id, text, children, expanded }` items, Vim/arrow key navigation, `on_select`, and `on_change`.
-- **`ui.list`:** List view with optional fuzzy filtering (`filterable = true`, activate with `/`), item descriptions, Vim keys, pagination (`page_size`, `height`), `on_select`, and `on_change`.
+- **`ui.list`:** List view with optional fuzzy filtering (`filterable = true`, activate with `/`), item descriptions, and `on_select` (when `filterable = true`, also supports Vim keys, pagination via `page_size`, and `on_change`).
 - **`ui.viewport`:** Scrollable text view with Vim bindings (`j` / `k`, `d` / `u`, `g` / `G`, `h` / `l`). Supports `soft_wrap` and `show_line_numbers`.
 
 ### Motion & Indicators

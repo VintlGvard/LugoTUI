@@ -116,23 +116,33 @@ func validateEditor(n *Node) error {
 	return nil
 }
 
-var compiledRegexCache sync.Map
+var (
+	compiledRegexMu    sync.RWMutex
+	compiledRegexCache = map[string]*regexp.Regexp{}
+)
+
+const maxCompiledRegexCache = 256
 
 func editorValidation(n *Node, value string) string {
 	pattern := str(n, "validation_pattern", "")
 	if pattern == "" {
 		return ""
 	}
-	var re *regexp.Regexp
-	if cached, ok := compiledRegexCache.Load(pattern); ok {
-		re = cached.(*regexp.Regexp)
-	} else {
+	compiledRegexMu.RLock()
+	re := compiledRegexCache[pattern]
+	compiledRegexMu.RUnlock()
+	if re == nil {
 		var err error
 		re, err = regexp.Compile(pattern)
 		if err != nil {
 			return err.Error()
 		}
-		compiledRegexCache.Store(pattern, re)
+		compiledRegexMu.Lock()
+		if len(compiledRegexCache) >= maxCompiledRegexCache {
+			clear(compiledRegexCache)
+		}
+		compiledRegexCache[pattern] = re
+		compiledRegexMu.Unlock()
 	}
 	if re.MatchString(value) {
 		return ""

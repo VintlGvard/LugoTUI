@@ -47,7 +47,7 @@ The sandboxed process is subjected to strict kernel resource caps:
 
 | Resource Limit | Value | Description |
 | --- | --- | --- |
-| Address Space (`RLIMIT_AS`) | 1 GiB | Virtual address space limit per process, inherited by children. |
+| Address Space (`RLIMIT_AS`) | 4 GiB | Virtual address space limit per process, inherited by children. |
 | CPU Time (`RLIMIT_CPU`) | 120 seconds | CPU time limit per process before SIGXCPU; inherited by children. |
 | Open File Descriptors (`RLIMIT_NOFILE`) | 64 | Maximum number of open file descriptors. |
 

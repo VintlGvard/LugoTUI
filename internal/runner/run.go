@@ -339,6 +339,19 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		}()
 	}
 	doReload := func() {
+		if r.ViewFunc != nil || r.L == nil {
+			var candidate *engine.Runtime
+			candidate, err = r.Reload("")
+			if err == nil {
+				if candidate != r {
+					r.Close()
+					r = candidate
+					applyRuntimeOptions(r, options)
+				}
+				diagnostic = ""
+			}
+			return
+		}
 		if readSource == nil {
 			return
 		}
@@ -348,9 +361,11 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 			var candidate *engine.Runtime
 			candidate, err = r.Reload(source)
 			if err == nil {
-				r.Close()
-				r = candidate
-				applyRuntimeOptions(r, options)
+				if candidate != r {
+					r.Close()
+					r = candidate
+					applyRuntimeOptions(r, options)
+				}
 				diagnostic = ""
 			}
 		}
@@ -359,22 +374,32 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 	eventHandler := buildEventHandler(options)
 	shouldQuit := false
 	dispatch := func() bool {
+		altChanged := false
+		if len(r.Events) > 0 {
+			filtered := r.Events[:0]
+			for _, event := range r.Events {
+				if event.Action == "__alt_screen" {
+					if enter, ok := event.Payload.(bool); ok {
+						r.AltScreen = enter
+						r.Inline = !enter
+						r.InvalidateScreen()
+						screen.Sync()
+						altChanged = true
+					}
+					continue
+				}
+				filtered = append(filtered, event)
+			}
+			r.Events = filtered
+		}
 		if !hasEventHandler {
 			if options.SocketPath == "" {
 				r.DrainEvents()
 			}
-			return false
+			return altChanged
 		}
 		batch := r.DrainEvents()
 		for _, event := range batch {
-			if event.Action == "__alt_screen" {
-				if enter, ok := event.Payload.(bool); ok {
-					r.AltScreen = enter
-					r.Inline = !enter
-					screen.Sync()
-				}
-				continue
-			}
 			if e := eventHandler(r, event); e != nil {
 				if errors.Is(e, engine.ErrQuit) {
 					shouldQuit = true
@@ -389,7 +414,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 			default:
 			}
 		}
-		return len(batch) != 0
+		return altChanged || len(batch) != 0
 	}
 	dispatch()
 	drawRuntime(options, screen, r, diagnostic)
@@ -420,6 +445,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		select {
 		case sig := <-signals:
 			if isResizeSignal(sig) {
+				r.InvalidateScreen()
 				screen.Sync()
 				redraw = true
 			} else {
@@ -474,6 +500,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 			case ControlAltScreen:
 				r.AltScreen = msg.AltScreen
 				r.Inline = !msg.AltScreen
+				r.InvalidateScreen()
 				screen.Sync()
 				redraw = true
 			}
@@ -540,6 +567,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 				userAction = true
 				err = r.Mouse(e)
 			case *tcell.EventResize:
+				r.InvalidateScreen()
 				screen.Sync()
 			}
 			if userAction && err == nil {

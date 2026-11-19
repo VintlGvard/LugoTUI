@@ -81,7 +81,7 @@ func (f *frameReader) Read(p []byte) (int, error) {
 	}
 	n, err := f.conn.Read(p)
 	if n > 0 {
-		f.inFrame = bytes.IndexByte(p[:n], '\n') < 0
+		f.inFrame = p[n-1] != '\n'
 	}
 	return n, err
 }
@@ -227,6 +227,9 @@ func (r *Runtime) AgentReply(data []byte) []byte {
 	case "events":
 		events := r.Events
 		r.Events = nil
+		if events == nil {
+			events = []HostEvent{}
+		}
 		return replyJSON(events, nil)
 	default:
 		return replyJSON(nil, protocolError(CodeUnknownCommand, errors.New("unknown method")))

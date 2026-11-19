@@ -76,37 +76,63 @@ func (r *Runtime) validateActions() error {
 	return nil
 }
 
-func wrapInlineAction(raw any) GoActionFunc {
+func wrapInlineAction(raw any) (GoActionFunc, bool) {
 	switch fn := raw.(type) {
 	case GoActionFunc:
-		return fn
+		if fn == nil {
+			return nil, true
+		}
+		return fn, true
 	case func() error:
 		if fn == nil {
-			return nil
+			return nil, true
 		}
-		return func(_ *Runtime, _ map[string]any) error { return fn() }
+		return func(_ *Runtime, _ map[string]any) error { return fn() }, true
+	case func():
+		if fn == nil {
+			return nil, true
+		}
+		return func(_ *Runtime, _ map[string]any) error { fn(); return nil }, true
 	case func(map[string]any) error:
 		if fn == nil {
-			return nil
+			return nil, true
 		}
-		return func(_ *Runtime, payload map[string]any) error { return fn(payload) }
+		return func(_ *Runtime, payload map[string]any) error { return fn(payload) }, true
+	case func(any) error:
+		if fn == nil {
+			return nil, true
+		}
+		return func(_ *Runtime, payload map[string]any) error { return fn(payload) }, true
+	case func(string):
+		if fn == nil {
+			return nil, true
+		}
+		return func(_ *Runtime, payload map[string]any) error {
+			fn(core.ExtractPayloadText(payload))
+			return nil
+		}, true
+	case func(string) error:
+		if fn == nil {
+			return nil, true
+		}
+		return func(_ *Runtime, payload map[string]any) error { return fn(core.ExtractPayloadText(payload)) }, true
 	default:
-		return nil
+		return nil, false
 	}
 }
 
-func (r *Runtime) bindInlineActions(root *Node) {
+func (r *Runtime) bindInlineActions(root *Node) error {
 	if root == nil {
-		return
+		return nil
 	}
 	if r.GoActions == nil {
 		r.GoActions = map[string]GoActionFunc{}
 	}
 	seen := map[*Node]bool{}
-	var walk func(*Node, int)
-	walk = func(n *Node, depth int) {
+	var walk func(*Node, int) error
+	walk = func(n *Node, depth int) error {
 		if n == nil || depth > core.MaxDepth || seen[n] {
-			return
+			return nil
 		}
 		seen[n] = true
 		if len(n.InlineActions) > 0 {
@@ -114,7 +140,13 @@ func (r *Runtime) bindInlineActions(root *Node) {
 				n.Props = map[string]any{}
 			}
 			for prop, raw := range n.InlineActions {
-				fn := wrapInlineAction(raw)
+				if raw == nil {
+					continue
+				}
+				fn, supported := wrapInlineAction(raw)
+				if !supported {
+					return &nodeError{Node: n, Property: prop, Err: fmt.Errorf("unsupported inline action type %T", raw)}
+				}
 				if fn == nil {
 					continue
 				}
@@ -136,8 +168,11 @@ func (r *Runtime) bindInlineActions(root *Node) {
 			}
 		}
 		for _, c := range n.Children {
-			walk(c, depth+1)
+			if err := walk(c, depth+1); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	walk(root, 0)
+	return walk(root, 0)
 }

@@ -153,7 +153,7 @@ func Table(columns []TableColumn, rows [][]string) *Node {
 	for i, c := range columns {
 		width := c.Width
 		if width <= 0 {
-			width = max(len(c.Title)+2, 8)
+			width = max(textWidth(c.Title)+2, 8)
 		}
 		m := map[string]any{
 			"title": c.Title,

@@ -64,7 +64,6 @@ func TestBorderStylesAndColors(t *testing.T) {
 	defer screen.Fini()
 	screen.SetSize(20, 6)
 
-	// 1. Rounded border
 	pRounded := tui.Panel("Round", tui.Text("Hi")).
 		Border("rounded").
 		BorderFG("cyan").
@@ -81,7 +80,6 @@ func TestBorderStylesAndColors(t *testing.T) {
 		t.Fatalf("expected rounded corners '╭' and '╰', got:\n%s", content1)
 	}
 
-	// 2. Double border
 	pDouble := tui.Panel("Double", tui.Text("Hi")).Border("double")
 	rt2, err := tui.LoadView(pDouble)
 	if err != nil {
@@ -94,7 +92,6 @@ func TestBorderStylesAndColors(t *testing.T) {
 		t.Fatalf("expected double corners '╔' and '╚', got:\n%s", content2)
 	}
 
-	// 3. Thick border
 	pThick := tui.Panel("Thick", tui.Text("Hi")).Border("thick")
 	rt3, err := tui.LoadView(pThick)
 	if err != nil {
@@ -107,7 +104,6 @@ func TestBorderStylesAndColors(t *testing.T) {
 		t.Fatalf("expected thick corners '┏' and '┗', got:\n%s", content3)
 	}
 
-	// 4. ASCII border
 	pASCII := tui.Panel("ASCII", tui.Text("Hi")).Border("ascii")
 	rt4, err := tui.LoadView(pASCII)
 	if err != nil {
@@ -120,7 +116,6 @@ func TestBorderStylesAndColors(t *testing.T) {
 		t.Fatalf("expected ascii border '+-', got:\n%s", content4)
 	}
 
-	// 5. Custom glyphs
 	customGlyphs := tui.BorderGlyphs{
 		Top: '*', Bottom: '*', Left: '!', Right: '!',
 		TopLeft: '1', TopRight: '2', BottomLeft: '3', BottomRight: '4',
@@ -212,7 +207,7 @@ func TestOnRawKeyInterception(t *testing.T) {
 	}).SetID("custom_editor").Focusable(true).OnRawKey(func(e *tcell.EventKey) bool {
 		if e.Key() == tcell.KeyRune && e.Rune() == 'x' {
 			rawHandled = true
-			return true // Handled!
+			return true
 		}
 		return false
 	})
@@ -233,7 +228,6 @@ func TestOnRawKeyInterception(t *testing.T) {
 		t.Fatalf("expected focus on custom_editor, got %q", rt.Focus())
 	}
 
-	// Send key 'x'
 	err = rt.Key(tcell.NewEventKey(tcell.KeyRune, 'x', 0))
 	if err != nil {
 		t.Fatal(err)

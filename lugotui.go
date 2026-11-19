@@ -1,6 +1,3 @@
-// Package lugotui provides a flat root entry point for LugoTUI, mirroring
-// the tui package so callers can import either github.com/VintlGvard/LugoTUI
-// or github.com/VintlGvard/LugoTUI/tui.
 package lugotui
 
 import (
@@ -38,6 +35,19 @@ type (
 	HighlightSpan   = tui.HighlightSpan
 	BorderGlyphs    = tui.BorderGlyphs
 	Canvas          = tui.Canvas
+	ReservedKeys    = tui.ReservedKeys
+	NodeJSON        = tui.NodeJSON
+	ProtocolError   = tui.ProtocolError
+)
+
+const (
+	CodeInvalidJSON       = tui.CodeInvalidJSON
+	CodeUnknownCommand    = tui.CodeUnknownCommand
+	CodeValidationError   = tui.CodeValidationError
+	CodeRevisionConflict  = tui.CodeRevisionConflict
+	CodeLuaError          = tui.CodeLuaError
+	CodeTaskLimitExceeded = tui.CodeTaskLimitExceeded
+	CodeInternalError     = tui.CodeInternalError
 )
 
 var (
@@ -64,6 +74,12 @@ var (
 	LoadView             = tui.LoadView
 	LoadViewFunc         = tui.LoadViewFunc
 	DefaultTheme         = tui.DefaultTheme
+	TokyoNightTheme      = tui.TokyoNightTheme
+	CatppuccinTheme      = tui.CatppuccinTheme
+	DraculaTheme         = tui.DraculaTheme
+	NordTheme            = tui.NordTheme
+	Demo                 = tui.Demo
+	ErrorCode            = tui.ErrorCode
 	WithAppFile          = tui.WithAppFile
 	WithSource           = tui.WithSource
 	WithView             = tui.WithView

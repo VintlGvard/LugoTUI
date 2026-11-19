@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -60,7 +61,8 @@ func (r *Runtime) keyCollection(n *Node, e *tcell.EventKey) (bool, error) {
 		return true, nil
 	}
 	if n.Type == "viewport" {
-		lines := viewportLines(r.text(n), body.W, flag(n, "soft_wrap"))
+		_, contentW := viewportGutter(r.text(n), body.W, flag(n, "show_line_numbers"))
+		lines := viewportLines(r.text(n), contentW, flag(n, "soft_wrap"))
 		switch e.Key() {
 		case tcell.KeyUp:
 			s.Scroll--
@@ -185,12 +187,18 @@ func (r *Runtime) keyCollection(n *Node, e *tcell.EventKey) (bool, error) {
 		return true, r.collectionActivate(n, s, c, items)
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		if n.Type == "filepicker" {
-			return true, r.Action(str(n, "on_navigate", ""), map[string]any{"id": n.ID, "path": filepath.Dir(str(n, "path", "."))})
+			dir := str(n, "current_dir", str(n, "path", "."))
+			parent := filepath.Dir(dir)
+			if strings.Contains(dir, "/") && !strings.Contains(dir, "\\") {
+				parent = path.Dir(dir)
+			}
+			return true, r.Action(str(n, "on_navigate", ""), map[string]any{"id": n.ID, "path": parent})
 		}
 	case tcell.KeyLeft, tcell.KeyRight:
 		if n.Type == "table" {
+			maxX := max(0, tableTotalWidth(n)-body.W)
 			if e.Key() == tcell.KeyRight {
-				c.X++
+				c.X = min(maxX, c.X+1)
 			} else {
 				c.X = max(0, c.X-1)
 			}
@@ -280,7 +288,8 @@ func (r *Runtime) mouseCollection(n *Node, e *tcell.EventMouse) (bool, error) {
 	s.Selected = index
 	if n.Type == "tree" {
 		it := items[index]
-		if it.branch && x < body.X+it.depth*2+2 {
+		indent := max(0, int(num(n, "branch_indent", 2)))
+		if it.branch && x < body.X+it.depth*indent+2 {
 			c.Expanded[it.id] = !collectionExpanded(c, it)
 			return true, nil
 		}

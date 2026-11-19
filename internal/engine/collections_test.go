@@ -118,3 +118,154 @@ func TestCollectionFileRestrictions(t *testing.T) {
 		t.Fatal("dir allowed")
 	}
 }
+
+func TestViewportLineNumbersSoftWrapAndHorizontalClip(t *testing.T) {
+	r, err := Load(`local ui = require('ui')
+return {
+  view = ui.column {
+    id = 'root',
+    ui.viewport { id = 'vp_wrap', width = 10, height = 3, soft_wrap = true, show_line_numbers = true, text = 'abcdefgh\nijklmnop\nend' },
+    ui.viewport { id = 'vp_horiz', width = 10, height = 2, soft_wrap = false, show_line_numbers = true, text = '1234567890abcdef' }
+  }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(10, 5)
+	r.Draw(screen, "")
+
+	r0c1, _, _, _ := screen.GetContent(1, 0)
+	r1c1, _, _, _ := screen.GetContent(1, 1)
+	r2c1, _, _, _ := screen.GetContent(1, 2)
+	if r0c1 != '1' || r1c1 != ' ' || r2c1 != '2' {
+		t.Fatalf("expected logical line numbers [1, ' ', 2] on wrapped lines, got [%q, %q, %q]", r0c1, r1c1, r2c1)
+	}
+
+	if err := r.SetFocus("vp_wrap"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Key(tcell.NewEventKey(tcell.KeyEnd, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	r.Draw(screen, "")
+	if r.State["vp_wrap"].Scroll != 2 {
+		t.Fatalf("expected vp_wrap KeyEnd to reach scroll=2 (gutter-aware), got %d", r.State["vp_wrap"].Scroll)
+	}
+
+	if err := r.SetFocus("vp_horiz"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		if err := r.Key(tcell.NewEventKey(tcell.KeyRight, 0, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.Draw(screen, "")
+	numCell, _, _, _ := screen.GetContent(1, 3)
+	textCell, _, _, _ := screen.GetContent(3, 3)
+	if numCell != '1' || textCell != '5' {
+		t.Fatalf("expected line number '1' preserved and scrolled text '5' at x=3, got (%q, %q)", numCell, textCell)
+	}
+}
+
+func TestFilepickerParentEntryBackspaceAndMouseDragGuard(t *testing.T) {
+	r, err := Load(`local ui = require('ui')
+return {
+  view = ui.column {
+    id = 'root',
+    ui.filepicker {
+      id = 'fp',
+      height = 5,
+      current_dir = '/a/b',
+      items = {
+        { text = '../', path = '..', is_dir = true },
+        { text = '.env', path = '/a/b/.env', is_dir = false },
+        { text = 'main.go', path = '/a/b/main.go', is_dir = false }
+      },
+      on_navigate = 'nav',
+      on_select = 'sel'
+    },
+    ui.tree {
+      id = 'tr',
+      height = 4,
+      items = { { id = 'n1', text = 'root', children = { { id = 'n2', text = 'leaf' } } } },
+      on_select = 'sel'
+    }
+  },
+  actions = {
+    nav = function(e) host.dispatch('nav', e) end,
+    sel = function(e) host.dispatch('sel', e) end
+  }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	_, fpCol := r.collectionState(r.Nodes["fp"])
+	fpItems := r.collectionItems(r.Nodes["fp"], fpCol)
+	if len(fpItems) != 2 || fpItems[0].path != ".." {
+		t.Fatalf("expected '..' visible and '.env' hidden, got %+v", fpItems)
+	}
+
+	if err := r.SetFocus("fp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Key(tcell.NewEventKey(tcell.KeyBackspace2, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	ev := r.DrainEvents()
+	if len(ev) != 1 || ev[0].Action != "nav" || ev[0].Payload.(map[string]any)["path"] != "/a" {
+		t.Fatalf("expected backspace navigation to /a, got %+v", ev)
+	}
+
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(30, 12)
+	r.Draw(screen, "")
+
+	trY := r.Nodes["tr"].Rect.Y
+	if err := r.Mouse(tcell.NewEventMouse(0, trY, tcell.Button1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Mouse(tcell.NewEventMouse(10, trY, tcell.Button1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Mouse(tcell.NewEventMouse(10, trY, tcell.ButtonNone, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if selEv := r.DrainEvents(); len(selEv) != 0 {
+		t.Fatalf("expected tree toggle without drag activation, got %+v", selEv)
+	}
+}
+
+func TestCollectionValidationAndTableTitleWidth(t *testing.T) {
+	tbl := Table([]TableColumn{{Title: "Привет"}}, [][]string{{"ok"}})
+	cols := tbl.Props["columns"].([]any)
+	if w := cols[0].(map[string]any)["width"].(int); w != 8 {
+		t.Fatalf("expected display width 8 for 'Привет', got %d", w)
+	}
+
+	badProps := &Node{Type: "text", ID: "t", Props: map[string]any{"columns": []any{}}}
+	if validateCollection(badProps) == nil {
+		t.Fatal("expected collection property on text node to fail")
+	}
+
+	badCell := &Node{Type: "table", ID: "tbl", Props: map[string]any{
+		"columns": []any{map[string]any{"title": "A", "width": float64(5)}},
+		"rows":    []any{[]any{map[string]any{"text": "x", "bold": "nope"}}},
+	}}
+	if validateCollection(badCell) == nil {
+		t.Fatal("expected non-boolean table cell bold to fail")
+	}
+}

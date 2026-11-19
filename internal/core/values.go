@@ -263,11 +263,15 @@ func cloneValue(v any, depth int) (any, error) {
 			cp[i] = cloned
 		}
 		return cp, nil
+	case []int:
+		return append([]int(nil), value...), nil
+	case []float64:
+		return append([]float64(nil), value...), nil
 	case []string:
 		return append([]string(nil), value...), nil
 	case BorderGlyphs, Sides, BorderSides, Rect, Theme:
 		return v, nil
-	case nil, string, bool, int, int64, float64:
+	case nil, string, bool, int, int64, float32, float64:
 		return v, nil
 	default:
 		return nil, fmt.Errorf("unsupported Go type %T", v)

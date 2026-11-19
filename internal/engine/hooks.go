@@ -58,12 +58,13 @@ func (c *OSC52Clipboard) Write(text string) error {
 		return fmt.Errorf("clipboard text exceeds 1 MiB")
 	}
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.text = text
-	out := c.out
-	c.mu.Unlock()
-	if out != nil {
+	if c.out != nil {
 		encoded := base64.StdEncoding.EncodeToString([]byte(text))
-		_, _ = fmt.Fprintf(out, "\x1b]52;c;%s\x07", encoded)
+		if _, err := fmt.Fprintf(c.out, "\x1b]52;c;%s\x07", encoded); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -105,3 +105,32 @@ func TestRootPackageHelpers(t *testing.T) {
 		t.Fatalf("expected custom screen renderer to run, got %d calls", renderCalls.Load())
 	}
 }
+
+func TestRootPackageFacadeCompleteness(t *testing.T) {
+	var rk lugotui.ReservedKeys = lugotui.ReservedKeys{Quit: []string{"Ctrl+Q"}}
+	_ = lugotui.WithReservedKeys(rk)
+	var nj lugotui.NodeJSON
+	_ = nj
+	var pe *lugotui.ProtocolError = &lugotui.ProtocolError{Code: lugotui.CodeValidationError}
+	if lugotui.ErrorCode(pe) != lugotui.CodeValidationError {
+		t.Fatalf("unexpected ErrorCode: %s", lugotui.ErrorCode(pe))
+	}
+	if lugotui.CodeInvalidJSON == "" || lugotui.CodeUnknownCommand == "" || lugotui.CodeRevisionConflict == "" ||
+		lugotui.CodeLuaError == "" || lugotui.CodeTaskLimitExceeded == "" || lugotui.CodeInternalError == "" {
+		t.Fatal("empty protocol error code constant")
+	}
+	if lugotui.Demo() == "" {
+		t.Fatal("empty Demo source")
+	}
+	for _, th := range []lugotui.Theme{
+		lugotui.DefaultTheme(),
+		lugotui.TokyoNightTheme(),
+		lugotui.CatppuccinTheme(),
+		lugotui.DraculaTheme(),
+		lugotui.NordTheme(),
+	} {
+		if th.Foreground == "" || th.Background == "" || th.FocusForeground == "" {
+			t.Fatalf("incomplete theme preset: %+v", th)
+		}
+	}
+}

@@ -40,7 +40,7 @@ func main() {
 			).Padding(1).Gap(1)
 		},
 		map[string]lugotui.ActionHandler{
-			"quit": func(rt *lugotui.Runtime, _ map[string]any) error {
+			"quit": func(rt *lugotui.Runtime, _ any) error {
 				return rt.Quit()
 			},
 		},
@@ -115,7 +115,7 @@ Use `Custom(paintFn func(c Canvas)) *Node`:
 lugotui.Custom(func(c lugotui.Canvas) {
     b := c.Bounds()
     c.Fill(b, ' ')
-    c.Printf(b.X+1, b.Y, tcell.StyleDefault.Bold(true), "W:%d H:%d Focused:%v", b.Width, b.Height, c.IsFocused())
+    c.Printf(b.X+1, b.Y, tcell.StyleDefault.Bold(true), "W:%d H:%d Focused:%v", b.W, b.H, c.IsFocused())
 }).Focusable(true).Size(40, 8)
 ```
 Exact `Canvas` methods:
@@ -185,7 +185,6 @@ For direct low-level keyboard handling on a custom node, chain `.OnRawKey(func(e
 Lua apps (`--app app.lua`, `RunApp`, `RunSource`, `QuickRun`, `Load`) run inside embedded `gopher-lua` with **no** `os`, `io`, or arbitrary `require` — only `require("ui")`.
 
 - `ui.panel { title = "...", ... }` already implies borders (`border = true` is optional).
-- Widget buttons with `label` fall back to `label` when `text` is absent.
 - **Transactional rollback**: if a Lua action errors or times out, LugoTUI restores `_G` globals, model `Data`, widget state, **and** Lua closure upvalues (`*lua.Upvalue`), while discarding uncommitted `HostEvent`s so `OnEvent` never observes rolled-back state.
 - **Built-in limits** (`internal/core` + `internal/engine`):
   - Execution budgets: `250ms` init timeout, `50ms` action timeout, bounded expansion budget (`luaBudget`) and `string.rep` cap.
@@ -228,7 +227,7 @@ lugotui --version
 Each request/response is one JSON object per line:
 - **Snapshot**: `{"method":"snapshot"}` -> returns snapshot with `Revision`, `Focus`, `Nodes` (including `Bounds`), etc.
 - **Apply**: `{"method":"apply","packet":{"revision":N,"operations":[...]}}` -> revision-checked atomic `patch` / `replace` operations.
-- **Message**: `{"method":"message","action":"...","event":{...}}` -> dispatches an action.
+- **Message**: `{"method":"message","action":"...","payload":{...}}` -> dispatches an action.
 - **Events**: `{"method":"events"}` -> drains queued host events.
 
 Exported protocol error codes (`lugotui.ErrorCode(err)`): `CodeInvalidJSON`, `CodeUnknownCommand`, `CodeValidationError`, `CodeRevisionConflict`, `CodeLuaError`, `CodeTaskLimitExceeded`, `CodeInternalError`.

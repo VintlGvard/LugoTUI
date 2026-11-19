@@ -14,7 +14,11 @@ func (r *Runtime) Tick(now time.Time) error {
 	if r.Root == nil {
 		return nil
 	}
+	var nodes []*Node
 	for original := range visibleNodes(r.Root) {
+		nodes = append(nodes, original)
+	}
+	for _, original := range nodes {
 		n := original
 		if r.Nodes != nil {
 			n = r.Nodes[original.ID]
@@ -104,12 +108,15 @@ func (r *Runtime) Tick(now time.Time) error {
 			if !p.Running || p.TimedOut {
 				continue
 			}
+			prevElapsed := p.Elapsed
 			p.Elapsed += delta
 			if n.Type == "timer" && p.Elapsed >= time.Duration(p.Duration*float64(time.Millisecond)) {
 				p.Elapsed = time.Duration(p.Duration * float64(time.Millisecond))
 				p.TimedOut = true
 				if action := str(n, "on_timeout", ""); action != "" {
 					if err := r.Action(action, map[string]any{"id": n.ID, "elapsed": float64(p.Elapsed / time.Millisecond)}); err != nil {
+						p.TimedOut = false
+						p.Elapsed = prevElapsed
 						return err
 					}
 				}
@@ -350,6 +357,17 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 	case "timer", "stopwatch":
 		p := r.primitive(n)
 		old := *p
+		oldProp, hadProp := n.Props["running"]
+		restoreRunning := func() {
+			*p = old
+			if n.Props != nil {
+				if hadProp {
+					n.Props["running"] = oldProp
+				} else {
+					delete(n.Props, "running")
+				}
+			}
+		}
 		switch {
 		case e.Key() == tcell.KeyEnter || (e.Key() == tcell.KeyRune && e.Rune() == ' '):
 			if p.TimedOut {
@@ -362,9 +380,12 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 			p.Last = time.Time{}
 			p.Initialized = false
 			p.RunningProp = p.Running
+			if n.Props != nil {
+				n.Props["running"] = p.Running
+			}
 			if action := str(n, "on_change", ""); action != "" {
 				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.Running, "elapsed": float64(p.Elapsed / time.Millisecond)}); err != nil {
-					*p = old
+					restoreRunning()
 					return true, err
 				}
 			}
@@ -376,9 +397,12 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 			p.Initialized = false
 			p.Running = primitiveBool(n, "running", true)
 			p.RunningProp = p.Running
+			if n.Props != nil {
+				n.Props["running"] = p.Running
+			}
 			if action := str(n, "on_change", ""); action != "" {
 				if err := r.Action(action, map[string]any{"id": n.ID, "running": p.Running, "elapsed": float64(p.Elapsed / time.Millisecond)}); err != nil {
-					*p = old
+					restoreRunning()
 					return true, err
 				}
 			}
@@ -390,6 +414,11 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 		if e.Key() == tcell.KeyRune && e.Rune() == '?' {
 			p := r.primitive(n)
 			p.Full = !p.Full
+			p.FullProp = p.Full
+			if n.Props != nil {
+				n.Props["full"] = p.Full
+			}
+			r.layoutValid = false
 			return true, nil
 		}
 	}
@@ -397,17 +426,7 @@ func (r *Runtime) keyPrimitive(n *Node, e *tcell.EventKey) (bool, error) {
 }
 
 func primitiveKeyMatches(key string, e *tcell.EventKey) bool {
-	if key == e.Name() || key == strings.ReplaceAll(e.Name(), "-", "+") {
-		return true
-	}
-	if e.Key() == tcell.KeyRune && e.Modifiers() == tcell.ModNone && key == string(e.Rune()) {
-		return true
-	}
-	aliases := map[string]tcell.Key{"enter": tcell.KeyEnter, "esc": tcell.KeyEscape, "escape": tcell.KeyEscape, "tab": tcell.KeyTab, "backspace": tcell.KeyBackspace2, "up": tcell.KeyUp, "down": tcell.KeyDown, "left": tcell.KeyLeft, "right": tcell.KeyRight, "home": tcell.KeyHome, "end": tcell.KeyEnd, "pgup": tcell.KeyPgUp, "pgdown": tcell.KeyPgDn}
-	if k, ok := aliases[strings.ToLower(key)]; ok && k == e.Key() && e.Modifiers() == tcell.ModNone {
-		return true
-	}
-	return e.Key() != tcell.KeyRune && strings.EqualFold(strings.ReplaceAll(key, "+", "-"), strings.ReplaceAll(e.Name(), "+", "-"))
+	return keyMatches(key, e)
 }
 
 func (r *Runtime) bindingKey(e *tcell.EventKey) (bool, error) {

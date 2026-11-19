@@ -511,7 +511,16 @@ func TestSandboxFailsClosedWithoutDependencies(t *testing.T) {
 }
 
 func TestSandboxRejectsHostOptions(t *testing.T) {
-	for _, options := range []Options{{OnEvent: func(*engine.Runtime, engine.HostEvent) error { return nil }}, {ReservedKeys: &ReservedKeys{}}, {Theme: engine.Theme{Foreground: "red"}}} {
+	for _, options := range []Options{
+		{OnEvent: func(*engine.Runtime, engine.HostEvent) error { return nil }},
+		{ReservedKeys: &ReservedKeys{}},
+		{Theme: engine.Theme{Foreground: "red"}},
+		{Source: "return {view={type='text'}}"},
+		{View: &engine.Node{Type: "text", ID: "t"}},
+		{InitialData: map[string]any{"k": "v"}},
+		{Inline: true, InlineHeight: 5},
+		{FPS: 30},
+	} {
 		if err := Sandbox(options); err == nil || !strings.Contains(err.Error(), "cannot serialize") {
 			t.Fatal(err)
 		}
@@ -537,5 +546,63 @@ func TestDiagnosticClearsOnNextSuccessfulInput(t *testing.T) {
 	frame := receive(t, s.shows)
 	if strings.Contains(frame, "transient failure") {
 		t.Fatalf("diagnostic banner remained stuck after successful input: %q", frame)
+	}
+}
+
+func TestAltScreenLuaActionDoesNotLeakToSocketWithoutOnEvent(t *testing.T) {
+	dir, err := os.MkdirTemp(".", ".alt-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+	})
+	path := filepath.Join(dir, "agent.sock")
+	r, err := engine.Load(`local ui = require('ui')
+return {
+  view = ui.text { id = 't', text = 'hi' },
+  actions = {
+    go_inline = function() ui.exit_alt_screen() end
+  }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &observedScreen{SimulationScreen: tcell.NewSimulationScreen("UTF-8"), shows: make(chan string, 16)}
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	s.SetSize(30, 5)
+	done := make(chan error, 1)
+	go func() { done <- runScreen(Options{SocketPath: path, ReservedKeys: testKeys()}, s, r, nil) }()
+	receive(t, s.shows)
+	t.Cleanup(func() {
+		s.PostEventWait(tcell.NewEventKey(tcell.KeyExit, 0, 0))
+		if err := receive(t, done); err != nil {
+			t.Error(err)
+		}
+	})
+
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	if _, err := conn.Write([]byte(`{"method":"message","action":"go_inline"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte(`{"method":"events"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	evReply, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(evReply, "__alt_screen") {
+		t.Fatalf("__alt_screen leaked into socket events: %s", evReply)
 	}
 }

@@ -326,7 +326,7 @@ local function page(name)
     ui.text {id = 'runtime_result', text = ui.get('runtime_result') or 'No experiment accepted yet.', height = 1, shrink = 0, wrap = 'word', fg = amber},
     button('rollback_button', 'Try rollback (expected error)', 'demo_rollback')},
    text('Intentional failure after set, patch, focus and host.dispatch. Model, UI, focus and events stay unchanged. Runner shows a diagnostic; successful F5 reload clears it.', 2),
-   text('F5: Go reloads external Lua transactionally. Matching IDs retain edits; bad reload keeps the live UI. Lua globals / upvalues are not rolled back; store state with ui.set.', 2),
+   text('F5: Go reloads external Lua transactionally. Matching IDs retain edits; bad reload keeps the live UI. Lua globals / upvalues are not migrated across F5 reload; store state with ui.set.', 2),
   }
  elseif name == 'Transport' then
   body = {
@@ -407,7 +407,7 @@ local app = {
     ui.text {text = 'Event Driven', fg = purple, width = 14},
     ui.text {text = '│', fg = '#1e293b', width = 1},
     ui.text {text = 'F1 Help · Ctrl+P Commands · F2 Scratchpad · F5 Reload', fg = muted, grow = 1},
-    ui.text {text = 'v1.0.0', fg = muted, width = 7}},
+    ui.text {text = 'v0.2.2', fg = muted, width = 7}},
    ui.row {grow = 1, gap = 1,
     ui.panel {title = ' Navigator ', width = '20%', min_width = 12, max_width = 24, bg = surface,
      ui.list {id = 'tasks', grow = 1, items = pages, on_select = 'select'}},

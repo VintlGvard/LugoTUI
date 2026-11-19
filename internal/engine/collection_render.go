@@ -7,21 +7,58 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-func viewportLines(text string, width int, wrap bool) [][]string {
-	lines := [][]string{{}}
+type viewportLine struct {
+	glyphs      []string
+	logicalLine int
+}
+
+func viewportGutter(text string, width int, showLineNumbers bool) (int, int) {
+	if !showLineNumbers {
+		return 0, width
+	}
+	linesTotal := strings.Count(text, "\n") + 1
+	gutterW := len(fmt.Sprintf("%d", linesTotal)) + 2
+	return gutterW, max(1, width-gutterW)
+}
+
+func tableTotalWidth(n *Node) int {
+	columns, _ := collectionArray(n.Props["columns"])
+	total, count := 0, 0
+	for _, v := range columns {
+		m, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		width, ok := collectionNumber(m["width"])
+		if !ok {
+			continue
+		}
+		total += width
+		count++
+	}
+	if count > 1 {
+		total += count - 1
+	}
+	return total
+}
+
+func viewportLines(text string, width int, wrap bool) []viewportLine {
+	lines := []viewportLine{{logicalLine: 1}}
+	logical := 1
 	x := 0
 	for _, g := range graphemes(text) {
 		if g == "\n" {
-			lines = append(lines, []string{})
+			logical++
+			lines = append(lines, viewportLine{logicalLine: logical})
 			x = 0
 			continue
 		}
 		w := textWidth(g)
 		if wrap && x > 0 && x+w > max(1, width) {
-			lines = append(lines, []string{})
+			lines = append(lines, viewportLine{})
 			x = 0
 		}
-		lines[len(lines)-1] = append(lines[len(lines)-1], g)
+		lines[len(lines)-1].glyphs = append(lines[len(lines)-1].glyphs, g)
 		x += w
 	}
 	return lines
@@ -84,18 +121,12 @@ func (r *Runtime) paintTableRow(screen tcell.Screen, n *Node, value any, header 
 
 func (r *Runtime) paintViewport(screen tcell.Screen, n *Node, s *WidgetState, c *collectionState, st tcell.Style, cr, clip Rect) {
 	text := r.text(n)
-	contentW := cr.W
-	gutterW := 0
-	linesTotal := strings.Count(text, "\n") + 1
-	if flag(n, "show_line_numbers") {
-		gutterW = len(fmt.Sprintf("%d", linesTotal)) + 2
-		contentW = max(1, cr.W-gutterW)
-	}
+	gutterW, contentW := viewportGutter(text, cr.W, flag(n, "show_line_numbers"))
 	lines := viewportLines(text, contentW, flag(n, "soft_wrap"))
 	s.Scroll = max(0, min(s.Scroll, max(0, len(lines)-cr.H)))
 	maxWidth := 0
 	for _, line := range lines {
-		maxWidth = max(maxWidth, textWidth(strings.Join(line, "")))
+		maxWidth = max(maxWidth, textWidth(strings.Join(line.glyphs, "")))
 	}
 	if flag(n, "soft_wrap") {
 		c.X = 0
@@ -103,11 +134,16 @@ func (r *Runtime) paintViewport(screen tcell.Screen, n *Node, s *WidgetState, c 
 		c.X = max(0, min(c.X, max(0, maxWidth-contentW)))
 	}
 	if gutterW > 0 {
+		gutterClip := intersect(clip, Rect{X: cr.X, Y: cr.Y, W: min(cr.W, gutterW), H: cr.H})
 		for row := 0; row < cr.H && s.Scroll+row < len(lines); row++ {
-			numStr := fmt.Sprintf("%*d ", gutterW-1, s.Scroll+row+1)
-			put(screen, cr.X, cr.Y+row, numStr, st.Dim(true), clip)
+			ln := lines[s.Scroll+row].logicalLine
+			if ln > 0 {
+				numStr := fmt.Sprintf("%*d ", gutterW-1, ln)
+				put(screen, cr.X, cr.Y+row, numStr, st.Dim(true), gutterClip)
+			}
 		}
 	}
+	textClip := intersect(clip, Rect{X: cr.X + gutterW, Y: cr.Y, W: max(0, cr.W-gutterW), H: cr.H})
 	highlights, _ := collectionArray(n.Props["highlights"])
 	gs := graphemes(text)
 	x, y := 0, 0
@@ -139,7 +175,7 @@ func (r *Runtime) paintViewport(screen tcell.Screen, n *Node, s *WidgetState, c 
 					break
 				}
 			}
-			put(screen, cr.X+gutterW+x-c.X, cr.Y+y-s.Scroll, g, style, clip)
+			put(screen, cr.X+gutterW+x-c.X, cr.Y+y-s.Scroll, g, style, textClip)
 		}
 		x += w
 	}
@@ -159,8 +195,11 @@ func (r *Runtime) paintCollection(screen tcell.Screen, n *Node, st tcell.Style, 
 	stride := collectionStride(n, items)
 	page := min(collectionPageSize(n, body), max(1, body.H/stride))
 	collectionReveal(s, len(items), page)
-	if n.Type == "table" && collectionOption(n, "show_header", true) {
-		r.paintTableRow(screen, n, nil, true, cr.X, cr.Y, st.Bold(true), clip, c.X)
+	if n.Type == "table" {
+		c.X = max(0, min(c.X, max(0, tableTotalWidth(n)-body.W)))
+		if collectionOption(n, "show_header", true) {
+			r.paintTableRow(screen, n, nil, true, cr.X, cr.Y, st.Bold(true), clip, c.X)
+		}
 	}
 	if n.Type == "list" || n.Type == "filepicker" {
 		y := cr.Y
@@ -227,13 +266,16 @@ func (r *Runtime) paintCollection(screen tcell.Screen, n *Node, st tcell.Style, 
 		if n.Type == "tree" {
 			prefix := "  "
 			if it.branch {
+				openChar := str(n, "open_char", "▾")
+				closeChar := str(n, "close_char", "▸")
 				if collectionExpanded(c, it) {
-					prefix = "▾ "
+					prefix = openChar + " "
 				} else {
-					prefix = "▸ "
+					prefix = closeChar + " "
 				}
 			}
-			label = strings.Repeat("  ", it.depth) + prefix + label
+			indent := max(0, int(num(n, "branch_indent", 2)))
+			label = strings.Repeat(" ", indent*it.depth) + prefix + label
 		}
 		if n.Type == "filepicker" {
 			if it.dir {

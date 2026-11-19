@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -69,15 +68,47 @@ func collectionKeys(m map[string]any, keys ...string) error {
 	return nil
 }
 
+func validateCollectionNodeProps(n *Node) error {
+	for _, k := range []string{"columns", "rows", "show_header"} {
+		if _, ok := n.Props[k]; ok && n.Type != "table" {
+			return fmt.Errorf("%s requires table", k)
+		}
+	}
+	for _, k := range []string{"highlights", "soft_wrap", "show_line_numbers"} {
+		if _, ok := n.Props[k]; ok && n.Type != "viewport" {
+			return fmt.Errorf("%s requires viewport", k)
+		}
+	}
+	for _, k := range []string{"open_char", "close_char", "branch_indent"} {
+		if _, ok := n.Props[k]; ok && n.Type != "tree" {
+			return fmt.Errorf("%s requires tree", k)
+		}
+	}
+	for _, k := range []string{"allowed_extensions", "file_allowed", "dir_allowed", "show_size", "show_permissions", "show_hidden", "current_dir", "path", "show_icons", "on_navigate"} {
+		if _, ok := n.Props[k]; ok && n.Type != "filepicker" {
+			return fmt.Errorf("%s requires filepicker", k)
+		}
+	}
+	for _, k := range []string{"filterable", "query", "page_size", "show_title", "show_status", "show_help", "show_pagination", "multi_select", "item_height"} {
+		if _, ok := n.Props[k]; ok && n.Type != "list" && n.Type != "filepicker" && n.Type != "table" && n.Type != "tree" {
+			return fmt.Errorf("%s requires collection", k)
+		}
+	}
+	return nil
+}
+
 func validateCollection(n *Node) error {
-	if !isCollection(n) {
+	if err := validateCollectionNodeProps(n); err != nil {
+		return err
+	}
+	if !isCollection(n) && n.Type != "list" {
 		return nil
 	}
-	b, err := json.Marshal(n.Props)
+	size, err := core.EstimateBytes(n.Props)
 	if err != nil {
 		return fmt.Errorf("collection data: %w", err)
 	}
-	if len(b) > maxText {
+	if size > maxText {
 		return fmt.Errorf("collection data exceeds 1 MiB")
 	}
 	for _, k := range []string{"soft_wrap", "show_header", "filterable", "show_title", "show_status", "show_help", "show_pagination", "show_hidden", "file_allowed", "dir_allowed", "show_size", "show_permissions", "show_line_numbers"} {
@@ -162,6 +193,21 @@ func validateCollection(n *Node) error {
 						return fmt.Errorf("table cell align must be left, right, or center")
 					}
 				}
+				if fg, ok := cm["fg"]; ok {
+					if _, ok := fg.(string); !ok {
+						return fmt.Errorf("table cell fg must be string")
+					}
+				}
+				if bg, ok := cm["bg"]; ok {
+					if _, ok := bg.(string); !ok {
+						return fmt.Errorf("table cell bg must be string")
+					}
+				}
+				if bold, ok := cm["bold"]; ok {
+					if _, ok := bold.(bool); !ok {
+						return fmt.Errorf("table cell bold must be boolean")
+					}
+				}
 			}
 		}
 	case "viewport":
@@ -189,6 +235,20 @@ func validateCollection(n *Node) error {
 			}
 		}
 	case "tree":
+		for _, k := range []string{"open_char", "close_char"} {
+			if v, ok := n.Props[k]; ok {
+				s, ok := v.(string)
+				if !ok || len(s) > 16 || strings.ContainsAny(s, "\r\n\t") {
+					return fmt.Errorf("%s must be a short single-line string", k)
+				}
+			}
+		}
+		if v, ok := n.Props["branch_indent"]; ok {
+			f, ok := floatVal(v)
+			if !ok || !finite(f) || f < 0 || f > 32 || math.Trunc(f) != f {
+				return fmt.Errorf("branch_indent must be an integer between 0 and 32")
+			}
+		}
 		count := 0
 		ids := map[string]bool{}
 		var walk func(any, int) error
@@ -264,6 +324,13 @@ func validateCollection(n *Node) error {
 			if v, ok := m["is_dir"]; ok {
 				if _, ok := v.(bool); !ok {
 					return fmt.Errorf("item is_dir must be boolean")
+				}
+			}
+			if sz, ok := m["size"]; ok {
+				if _, ok := sz.(string); !ok {
+					if f, ok := floatVal(sz); !ok || !finite(f) || f < 0 {
+						return fmt.Errorf("item size must be string or non-negative number")
+					}
 				}
 			}
 			if n.Type == "filepicker" {
@@ -387,8 +454,11 @@ func (r *Runtime) collectionItems(n *Node, c *collectionState) []collectionItem 
 				}
 			}
 		}
-		if n.Type == "filepicker" && !flag(n, "show_hidden") && strings.HasPrefix(filepath.Base(it.path), ".") {
-			continue
+		if n.Type == "filepicker" && !flag(n, "show_hidden") {
+			base := filepath.Base(it.path)
+			if base != "." && base != ".." && strings.HasPrefix(base, ".") {
+				continue
+			}
 		}
 		out = append(out, it)
 	}

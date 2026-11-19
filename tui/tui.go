@@ -62,7 +62,11 @@ func NewOSC52Clipboard(out io.Writer) *OSC52Clipboard {
 	return engine.NewOSC52Clipboard(out)
 }
 
-func DefaultTheme() Theme { return engine.DefaultTheme() }
+func DefaultTheme() Theme    { return engine.DefaultTheme() }
+func TokyoNightTheme() Theme { return engine.TokyoNightTheme() }
+func CatppuccinTheme() Theme { return engine.CatppuccinTheme() }
+func DraculaTheme() Theme    { return engine.DraculaTheme() }
+func NordTheme() Theme       { return engine.NordTheme() }
 
 const (
 	CodeInvalidJSON       = engine.CodeInvalidJSON

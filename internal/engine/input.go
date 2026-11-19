@@ -334,6 +334,25 @@ func keyMatches(pattern string, e *tcell.EventKey) bool {
 	if pattern == name || (strings.ContainsRune(name, '-') && pattern == strings.ReplaceAll(name, "-", "+")) {
 		return true
 	}
+	if e.Key() == tcell.KeyRune && e.Modifiers()&tcell.ModAlt != 0 && e.Modifiers()&(tcell.ModCtrl|tcell.ModMeta) == 0 {
+		p := strings.ReplaceAll(pattern, "-", "+")
+		lower := strings.ToLower(p)
+		rest := ""
+		matchedMod := false
+		if strings.HasPrefix(lower, "alt+shift+") && e.Modifiers()&tcell.ModShift != 0 {
+			rest = p[10:]
+			matchedMod = true
+		} else if strings.HasPrefix(lower, "alt+") && e.Modifiers()&tcell.ModShift == 0 {
+			rest = p[4:]
+			matchedMod = true
+		}
+		if matchedMod {
+			r := e.Rune()
+			if rest == string(r) || strings.EqualFold(rest, string(r)) || (strings.EqualFold(rest, "space") && r == ' ') {
+				return true
+			}
+		}
+	}
 	if e.Key() == tcell.KeyRune && (e.Modifiers() == tcell.ModNone || e.Modifiers() == tcell.ModShift) {
 		r := e.Rune()
 		if (pattern == "Space" || pattern == "space") && r == ' ' {
@@ -635,13 +654,30 @@ func (r *Runtime) handleEditorControlKey(n *Node, e *tcell.EventKey) (bool, erro
 }
 
 func (r *Runtime) Key(e *tcell.EventKey) error {
+	if r.isClosed() {
+		return errors.New("runtime closed")
+	}
 	r.ReconcileFocus()
 	scope := r.scope()
-	if e.Key() == tcell.KeyEscape && scope != r.Root {
-		r.Staged = []Operation{{ID: scope.ID, Props: map[string]any{"hidden": true}}}
-		return r.Commit()
-	}
 	n := r.Nodes[r.Focus]
+	if n != nil && !flag(n, "disabled") && r.isCollectionEditing(n) {
+		if n.RawKey != nil && n.RawKey(e) {
+			return nil
+		}
+		if handled, err := r.keyCollection(n, e); handled || err != nil {
+			return err
+		}
+	}
+	if e.Key() == tcell.KeyEscape && scope != r.Root {
+		closeOnEsc := true
+		if v, ok := scope.Props["close_on_esc"].(bool); ok {
+			closeOnEsc = v
+		}
+		if closeOnEsc {
+			r.Staged = []Operation{{ID: scope.ID, Props: map[string]any{"hidden": true}}}
+			return r.Commit()
+		}
+	}
 	if n != nil {
 		if n.RawKey != nil && n.RawKey(e) {
 			return nil
@@ -769,17 +805,28 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 		return nil
 	}
 	if n.Type == "scroll" {
+		maxScroll := max(0, n.ScrollExtent-contentRect(n).H)
 		switch e.Key() {
 		case tcell.KeyUp:
 			s.Scroll = max(0, s.Scroll-1)
 		case tcell.KeyDown:
 			s.Scroll++
+			if n.ScrollExtent > 0 {
+				s.Scroll = min(s.Scroll, maxScroll)
+			}
 		case tcell.KeyPgUp:
 			s.Scroll = max(0, s.Scroll-max(1, contentRect(n).H))
 		case tcell.KeyPgDn:
 			s.Scroll += max(1, contentRect(n).H)
+			if n.ScrollExtent > 0 {
+				s.Scroll = min(s.Scroll, maxScroll)
+			}
 		case tcell.KeyHome:
 			s.Scroll = 0
+		case tcell.KeyEnd:
+			if n.ScrollExtent > 0 {
+				s.Scroll = maxScroll
+			}
 		}
 		return nil
 	}
@@ -787,6 +834,9 @@ func (r *Runtime) Key(e *tcell.EventKey) error {
 }
 
 func (r *Runtime) Mouse(e *tcell.EventMouse) error {
+	if r.isClosed() {
+		return errors.New("runtime closed")
+	}
 	x, y := e.Position()
 	down := e.Buttons()&tcell.Button1 != 0
 	pressed := down && !r.mouseDown
@@ -819,7 +869,7 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 	if hit == nil {
 		return nil
 	}
-	if e.Buttons()&(tcell.WheelDown|tcell.WheelUp) != 0 && hit.Type != "list" && hit.Type != "table" && hit.Type != "viewport" && hit.Type != "tree" && hit.Type != "filepicker" && hitScroll != nil {
+	if e.Buttons()&(tcell.WheelDown|tcell.WheelUp|tcell.WheelLeft|tcell.WheelRight) != 0 && hit.Type != "list" && hit.Type != "table" && hit.Type != "viewport" && hit.Type != "tree" && hit.Type != "filepicker" && hitScroll != nil {
 		hit = hitScroll
 	}
 	s := r.State[hit.ID]
@@ -829,8 +879,10 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 	if pressed && focusable(hit) {
 		r.Focus = hit.ID
 	}
-	if handled, err := r.mouseCollection(hit, e); handled || err != nil {
-		return err
+	if pressed || e.Buttons()&(tcell.WheelUp|tcell.WheelDown|tcell.WheelLeft|tcell.WheelRight) != 0 {
+		if handled, err := r.mouseCollection(hit, e); handled || err != nil {
+			return err
+		}
 	}
 	if pressed && focusable(hit) {
 		if hit.Type == "input" || hit.Type == "textarea" {
@@ -843,8 +895,12 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 			return r.Action(str(hit, "on_click", ""), map[string]any{"id": hit.ID})
 		}
 		if hit.Type == "list" {
+			cr := contentRect(hit)
+			if x < cr.X || x >= cr.X+cr.W || y < cr.Y || y >= cr.Y+cr.H {
+				return nil
+			}
 			items := r.items(hit)
-			index := y - contentRect(hit).Y + s.Scroll
+			index := y - cr.Y + s.Scroll
 			if index < 0 || index >= len(items) {
 				return nil
 			}
@@ -855,6 +911,9 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 	if hit.Type == "scroll" {
 		if e.Buttons()&tcell.WheelDown != 0 {
 			s.Scroll += 3
+			if hit.ScrollExtent > 0 {
+				s.Scroll = min(s.Scroll, max(0, hit.ScrollExtent-contentRect(hit).H))
+			}
 		}
 		if e.Buttons()&tcell.WheelUp != 0 {
 			s.Scroll = max(0, s.Scroll-3)
@@ -873,21 +932,38 @@ func (r *Runtime) Mouse(e *tcell.EventMouse) error {
 
 func (r *Runtime) changed(n *Node, s *WidgetState) error {
 	var oldBound any
+	var hadBound bool
 	boundKey := str(n, "bind", "")
 	if boundKey != "" {
-		oldBound = r.Data[boundKey]
+		oldBound, hadBound = r.Data[boundKey]
 		r.Data[boundKey] = s.Value
+	}
+	restoreBound := func() {
+		if boundKey != "" {
+			if hadBound {
+				r.Data[boundKey] = oldBound
+			} else {
+				delete(r.Data, boundKey)
+			}
+		}
 	}
 	action := str(n, "on_change", "")
 	if action == "" {
+		if boundKey != "" {
+			if err := ValidateModel(r.Data); err != nil {
+				restoreBound()
+				return err
+			}
+		}
 		if r.ViewFunc != nil {
 			if err := r.reconcileRoot(r.ViewFunc(r)); err != nil {
+				restoreBound()
 				return err
 			}
 		} else {
 			r.Revision++
 		}
-		if boundKey != "" && !equalDataVal(oldBound, s.Value) {
+		if boundKey != "" && (!hadBound || !equalDataVal(oldBound, s.Value)) {
 			r.notifyState(boundKey, oldBound, s.Value)
 		}
 		return nil
@@ -895,8 +971,12 @@ func (r *Runtime) changed(n *Node, s *WidgetState) error {
 	err := r.Action(action, map[string]any{"id": n.ID, "value": s.Value, "error": editorValidation(n, s.Value)})
 	if err != nil {
 		r.Revision++
+		return err
 	}
-	return err
+	if boundKey != "" && equalDataVal(s.Value, r.Data[boundKey]) && (!hadBound || !equalDataVal(oldBound, s.Value)) {
+		r.notifyState(boundKey, oldBound, s.Value)
+	}
+	return nil
 }
 
 func editSave(s *WidgetState) {
@@ -947,6 +1027,9 @@ func abs(x int) int {
 }
 
 func (r *Runtime) Paste(text string) error {
+	if r.isClosed() {
+		return errors.New("runtime closed")
+	}
 	r.ReconcileFocus()
 	n := r.Nodes[r.Focus]
 	if n == nil || (n.Type != "input" && n.Type != "textarea") {

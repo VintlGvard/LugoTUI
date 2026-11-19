@@ -27,6 +27,31 @@ func bounded(n *Node, key string, v float64, parent int) float64 {
 	return max(size(n, "min_"+key, parent, 0), min(size(n, "max_"+key, parent, 1e6), v))
 }
 
+func nodeInsets(n *Node) core.Sides {
+	return core.PropSides(n, "padding").Add(core.NodeBorderSides(n).Insets())
+}
+
+func buttonAffixes(n *Node) (string, string) {
+	bStyle := str(n, "button_style", "")
+	prefix := str(n, "prefix", "")
+	suffix := str(n, "suffix", "")
+	if prefix == "" && suffix == "" {
+		switch strings.ToLower(bStyle) {
+		case "plain":
+			return "", ""
+		case "parens":
+			return "( ", " )"
+		case "chevrons":
+			return "< ", " >"
+		case "filled":
+			return " ", " "
+		default:
+			return "[ ", " ]"
+		}
+	}
+	return prefix, suffix
+}
+
 func intrinsic(n *Node) (float64, float64) {
 	if n.IntrinsicValid {
 		return n.IntrinsicCache[0], n.IntrinsicCache[1]
@@ -34,10 +59,7 @@ func intrinsic(n *Node) (float64, float64) {
 	if flag(n, "hidden") {
 		return 0, 0
 	}
-	pad := num(n, "padding", 0)
-	if flag(n, "border") || n.Type == "panel" {
-		pad++
-	}
+	insets := nodeInsets(n)
 	text := measureText(n)
 	if primitive := primitiveText(n); primitive != "" {
 		text = primitive
@@ -64,13 +86,13 @@ func intrinsic(n *Node) (float64, float64) {
 			cw, ch := intrinsic(c)
 			cw = size(c, "width", 0, cw)
 			ch = size(c, "height", 0, ch)
-			m := num(c, "margin", 0) * 2
+			cm := core.PropSides(c, "margin")
 			if row {
-				w += int(cw + m)
-				h = max(h, int(ch+m))
+				w += int(cw) + cm.Horizontal()
+				h = max(h, int(ch)+cm.Vertical())
 			} else {
-				h += int(ch + m)
-				w = max(w, int(cw+m))
+				h += int(ch) + cm.Vertical()
+				w = max(w, int(cw)+cm.Horizontal())
 			}
 			count++
 		}
@@ -80,7 +102,7 @@ func intrinsic(n *Node) (float64, float64) {
 			h += max(0, count-1) * int(num(n, "gap", 0))
 		}
 	}
-	n.IntrinsicCache = [2]float64{float64(w) + 2*pad, float64(h) + 2*pad}
+	n.IntrinsicCache = [2]float64{float64(w + insets.Horizontal()), float64(h + insets.Vertical())}
 	n.IntrinsicValid = true
 	return n.IntrinsicCache[0], n.IntrinsicCache[1]
 }
@@ -101,11 +123,8 @@ func place(n *Node, r, clip Rect) {
 		n.ScrollExtent = 0
 		return
 	}
-	pad := int(num(n, "padding", 0))
-	if flag(n, "border") || n.Type == "panel" {
-		pad++
-	}
-	inner := Rect{X: r.X + pad, Y: r.Y + pad, W: max(0, r.W-2*pad), H: max(0, r.H-2*pad)}
+	insets := nodeInsets(n)
+	inner := Rect{X: r.X + insets.Left, Y: r.Y + insets.Top, W: max(0, r.W-insets.Horizontal()), H: max(0, r.H-insets.Vertical())}
 	if n.Type == "scroll" {
 		n.ScrollExtent = inner.H
 	}
@@ -119,7 +138,7 @@ func place(n *Node, r, clip Rect) {
 		main, cross = inner.W, inner.H
 	}
 	if n.Type == "scroll" && !row {
-		extent := max(inner.H, int(math.Ceil(measuredHeight(n, r.W)))-(r.H-inner.H))
+		extent := max(inner.H, int(math.Ceil(measuredHeight(n, r.W)))-insets.Vertical())
 		n.ScrollExtent = extent
 		main = extent
 	}
@@ -139,14 +158,16 @@ func place(n *Node, r, clip Rect) {
 	}
 	bases := make([]float64, len(children))
 	vals := make([]float64, len(children))
-	margins := make([]int, len(children))
+	margins := make([]core.Sides, len(children))
 	gap := num(n, "gap", 0)
 	used := gap * float64(max(0, len(children)-1))
 	for i, c := range children {
 		iw, ih := intrinsic(c)
+		cm := core.PropSides(c, "margin")
+		margins[i] = cm
 		_, explicitHeight := c.Props["height"]
 		if !row && !explicitHeight && num(c, "grow", 0) == 0 {
-			available := cross - int(num(c, "margin", 0))*2
+			available := cross - cm.Horizontal()
 			available = int(size(c, "width", cross, float64(available)))
 			ih = measuredHeight(c, max(0, available))
 		}
@@ -161,8 +182,11 @@ func place(n *Node, r, clip Rect) {
 		b = size(c, "basis", main, b)
 		bases[i] = b
 		vals[i] = bounded(c, axis, b, main)
-		margins[i] = int(num(c, "margin", 0))
-		used += vals[i] + float64(margins[i]*2)
+		mainM := cm.Vertical()
+		if row {
+			mainM = cm.Horizontal()
+		}
+		used += vals[i] + float64(mainM)
 	}
 	remaining := float64(main) - used
 	weights := make([]float64, len(children))
@@ -197,7 +221,11 @@ func place(n *Node, r, clip Rect) {
 	}
 	used = gap * float64(max(0, len(children)-1))
 	for i, v := range vals {
-		used += v + float64(margins[i]*2)
+		mainM := margins[i].Vertical()
+		if row {
+			mainM = margins[i].Horizontal()
+		}
+		used += v + float64(mainM)
 	}
 	free := max(0, float64(main)-used)
 	offset := 0.0
@@ -218,8 +246,14 @@ func place(n *Node, r, clip Rect) {
 	}
 	cursor := offset
 	for i, c := range children {
-		m := margins[i]
-		cursor += float64(m)
+		cm := margins[i]
+		leadM, trailM := cm.Top, cm.Bottom
+		crossLead, crossTrail, crossTotal := cm.Left, cm.Right, cm.Horizontal()
+		if row {
+			leadM, trailM = cm.Left, cm.Right
+			crossLead, crossTrail, crossTotal = cm.Top, cm.Bottom, cm.Vertical()
+		}
+		cursor += float64(leadM)
 		start := int(math.Round(cursor))
 		end := int(math.Round(cursor + vals[i]))
 		iw, ih := intrinsic(c)
@@ -229,23 +263,23 @@ func place(n *Node, r, clip Rect) {
 		}
 		align := str(c, "align_self", str(n, "align", "stretch"))
 		if _, ok := c.Props[caxis]; !ok && align == "stretch" {
-			cv = float64(max(0, cross-2*m))
+			cv = float64(max(0, cross-crossTotal))
 		}
 		cv = bounded(c, caxis, size(c, caxis, cross, cv), cross)
 		cs := int(math.Round(cv))
-		off := m
+		off := crossLead
 		switch align {
 		case "center":
-			off = (cross - cs) / 2
+			off = crossLead + (cross-crossTotal-cs)/2
 		case "end":
-			off = cross - cs - m
+			off = cross - cs - crossTrail
 		}
 		cr := Rect{X: inner.X + off, Y: inner.Y + start, W: cs, H: max(0, end-start)}
 		if row {
 			cr = Rect{X: inner.X + start, Y: inner.Y + off, W: max(0, end-start), H: cs}
 		}
 		place(c, cr, childClip)
-		cursor += vals[i] + float64(m) + gap
+		cursor += vals[i] + float64(trailM) + gap
 	}
 	for _, c := range n.Children {
 		if flag(c, "hidden") || str(c, "position", "") != "absolute" {
@@ -285,7 +319,8 @@ func measureText(n *Node) string {
 		}
 	}
 	if n.Type == "button" {
-		return "[ " + text + " ]"
+		prefix, suffix := buttonAffixes(n)
+		return prefix + text + suffix
 	}
 	return text
 }
@@ -307,36 +342,59 @@ func measuredHeight(n *Node, width int) (heightResult float64) {
 	if flag(n, "hidden") {
 		return 0
 	}
-	pad := int(num(n, "padding", 0))
-	if flag(n, "border") || n.Type == "panel" {
-		pad++
-	}
-	inner := max(0, width-pad*2)
+	insets := nodeInsets(n)
+	inner := max(0, width-insets.Horizontal())
 	if n.Type == "text" && str(n, "wrap", "") != "none" && inner > 0 {
-		return float64(len(Lines(measureText(n), inner, true)) + pad*2)
+		return float64(len(Lines(measureText(n), inner, true)) + insets.Vertical())
 	}
 	if len(n.Children) == 0 {
 		return h
 	}
 	row := str(n, "direction", n.Type) == "row"
+	availAutoW := inner
+	if row {
+		flowCount := 0
+		fixedW := 0
+		autoCount := 0
+		for _, c := range n.Children {
+			if flag(c, "hidden") || str(c, "position", "") == "absolute" {
+				continue
+			}
+			flowCount++
+			cm := core.PropSides(c, "margin")
+			if _, hasW := c.Props["width"]; hasW {
+				fixedW += int(size(c, "width", inner, 0)) + cm.Horizontal()
+			} else {
+				autoCount++
+			}
+		}
+		if autoCount > 0 {
+			totalGap := int(num(n, "gap", 0)) * max(0, flowCount-1)
+			availAutoW = max(1, (inner-totalGap-fixedW)/autoCount)
+		}
+	}
 	height := 0.0
 	count := 0
 	for _, c := range n.Children {
 		if flag(c, "hidden") || str(c, "position", "") == "absolute" {
 			continue
 		}
-		m := num(c, "margin", 0)
-		cw := size(c, "width", inner, float64(inner)-2*m)
+		cm := core.PropSides(c, "margin")
+		defW := float64(inner - cm.Horizontal())
+		if row {
+			defW = float64(availAutoW - cm.Horizontal())
+		}
+		cw := size(c, "width", inner, defW)
 		ch := size(c, "height", 0, measuredHeight(c, max(0, int(cw))))
 		if row {
-			height = max(height, ch+2*m)
+			height = max(height, ch+float64(cm.Vertical()))
 		} else {
-			height += ch + 2*m
+			height += ch + float64(cm.Vertical())
 		}
 		count++
 	}
 	if !row {
 		height += float64(max(0, count-1)) * num(n, "gap", 0)
 	}
-	return height + float64(pad*2)
+	return height + float64(insets.Vertical())
 }

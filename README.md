@@ -54,7 +54,7 @@ func main() {
 					lugo.Button("Quit").Plain().OnClickErr(rt.Quit),
 				).Gap(1),
 			).Border("rounded").BorderFG("cyan").Grow(1).Padding(1).Gap(1),
-		).Padding(1).KeyDo("ctrl+q", func() { rt.Quit() })
+		).Padding(1).KeyErr("ctrl+q", rt.Quit)
 	}, nil, lugo.WithState("polls", 1))
 	if err != nil {
 		log.Fatal(err)

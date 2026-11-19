@@ -28,15 +28,22 @@ func (r *Runtime) StartTask(action string, work func(context.Context) (map[strin
 	return r.startTaskAfter(action, 0, work)
 }
 
-func (r *Runtime) startTaskAfter(action string, delay time.Duration, work func(context.Context) (map[string]any, error)) (uint64, error) {
+func (r *Runtime) validateTaskStart(action string, work func(context.Context) (map[string]any, error)) error {
 	if r.isClosed() {
-		return 0, errors.New("runtime closed")
+		return errors.New("runtime closed")
 	}
 	if work == nil {
-		return 0, protocolError(CodeValidationError, errors.New("nil task"))
+		return protocolError(CodeValidationError, errors.New("nil task"))
 	}
 	if !r.hasAction(action) {
-		return 0, protocolError(CodeValidationError, fmt.Errorf("unknown action %s", action))
+		return protocolError(CodeValidationError, fmt.Errorf("unknown action %s", action))
+	}
+	return nil
+}
+
+func (r *Runtime) startTaskAfter(action string, delay time.Duration, work func(context.Context) (map[string]any, error)) (uint64, error) {
+	if err := r.validateTaskStart(action, work); err != nil {
+		return 0, err
 	}
 	if r.tasks == nil {
 		r.tasks = &taskState{active: map[uint64]context.CancelFunc{}, timers: map[uint64]*time.Timer{}, named: map[string]uint64{}, results: make(chan TaskResult, 32), done: make(chan struct{})}
@@ -102,6 +109,9 @@ func (r *Runtime) CancelTask(id uint64) {
 }
 
 func (r *Runtime) StartTaskNamed(name, action string, work func(context.Context) (map[string]any, error)) (uint64, error) {
+	if err := r.validateTaskStart(action, work); err != nil {
+		return 0, err
+	}
 	if r.tasks != nil && name != "" {
 		if prevID, ok := r.tasks.named[name]; ok {
 			r.CancelTask(prevID)
@@ -115,6 +125,9 @@ func (r *Runtime) StartTaskNamed(name, action string, work func(context.Context)
 }
 
 func (r *Runtime) StartTaskDebounced(name string, delay time.Duration, action string, work func(context.Context) (map[string]any, error)) (uint64, error) {
+	if err := r.validateTaskStart(action, work); err != nil {
+		return 0, err
+	}
 	if r.tasks != nil && name != "" {
 		if prevID, ok := r.tasks.named[name]; ok {
 			r.CancelTask(prevID)

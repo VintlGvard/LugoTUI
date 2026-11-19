@@ -86,6 +86,65 @@ func primitiveStrings(v any) ([]string, bool) {
 	return out, true
 }
 
+func validatePercentFormat(s string) error {
+	if len(s) > 64 || strings.ContainsAny(s, "\r\n\t") {
+		return fmt.Errorf("percent_format exceeds 64 bytes or contains control characters")
+	}
+	verbs := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			continue
+		}
+		i++
+		if i >= len(s) {
+			return fmt.Errorf("incomplete percent_format verb")
+		}
+		if s[i] == '%' {
+			continue
+		}
+		verbs++
+		if verbs > 1 {
+			return fmt.Errorf("percent_format allows at most one format verb")
+		}
+		for i < len(s) && strings.ContainsRune("-+#0 ", rune(s[i])) {
+			i++
+		}
+		width := 0
+		widthDigits := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			widthDigits++
+			if widthDigits > 2 {
+				return fmt.Errorf("percent_format width exceeds 32")
+			}
+			width = width*10 + int(s[i]-'0')
+			i++
+		}
+		if width > 32 {
+			return fmt.Errorf("percent_format width exceeds 32")
+		}
+		if i < len(s) && s[i] == '.' {
+			i++
+			prec := 0
+			precDigits := 0
+			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+				precDigits++
+				if precDigits > 2 {
+					return fmt.Errorf("percent_format precision exceeds 32")
+				}
+				prec = prec*10 + int(s[i]-'0')
+				i++
+			}
+			if prec > 32 {
+				return fmt.Errorf("percent_format precision exceeds 32")
+			}
+		}
+		if i >= len(s) || !strings.ContainsRune("fFgGeEv", rune(s[i])) {
+			return fmt.Errorf("unsupported percent_format verb")
+		}
+	}
+	return nil
+}
+
 func validatePrimitive(n *Node) error {
 	allowed := map[string]string{
 		"cursor":    " mode blink_speed char ",
@@ -176,8 +235,12 @@ func validatePrimitive(n *Node) error {
 	}
 	if n.Type == "progress" {
 		if v, exists := n.Props["percent_format"]; exists {
-			if _, ok := v.(string); !ok {
+			s, ok := v.(string)
+			if !ok {
 				return fail("percent_format", "must be a string")
+			}
+			if err := validatePercentFormat(s); err != nil {
+				return fail("percent_format", err.Error())
 			}
 		}
 		if v, exists := n.Props["gradient"]; exists {

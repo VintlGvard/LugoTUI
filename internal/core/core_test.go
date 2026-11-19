@@ -568,3 +568,63 @@ func BenchmarkPropSides(b *testing.B) {
 		_ = PropSides(n, "padding")
 	}
 }
+
+func TestBuilderPropsValidationDeepCloneAndBoundedIDs(t *testing.T) {
+	root := (&Node{Type: "column"}).SetID("root").Add(
+		(&Node{Type: "panel"}).SetID("dlg").Modal(true).Backdrop("dim").CloseOnEsc(false),
+		(&Node{Type: "list"}).SetID("lst").Items("a", "b").MultiSelect(true).ItemHeight(2).Selected(1),
+		(&Node{Type: "filepicker"}).SetID("fp").ShowIcons(true).CurrentDir("/work").Prop("items", []any{
+			map[string]any{"text": "a.go", "path": "/work/a.go"},
+		}),
+		(&Node{Type: "box"}).SetID("padbox").Prop("padding", []float64{1, 2}).Prop("margin", []int{1, 2, 3, 4}),
+	)
+	if _, err := ValidateTree(root); err != nil {
+		t.Fatalf("ValidateTree failed on builder props: %v", err)
+	}
+
+	clonedPad := CloneNode(root.Children[3])
+	clonedPad.Props["padding"].([]float64)[0] = 99
+	rootFp := root.Children[2]
+	clonedFp := CloneNode(rootFp)
+	clonedFp.Props["items"].([]any)[0].(map[string]any)["text"] = "changed"
+	if root.Children[3].Props["padding"].([]float64)[0] != 1 {
+		t.Fatal("CloneNode aliased []float64 padding slice")
+	}
+	if rootFp.Props["items"].([]any)[0].(map[string]any)["text"] != "a.go" {
+		t.Fatal("CloneNode aliased nested items slice/map")
+	}
+
+	v32, err := CloneValue(float32(2.5))
+	if err != nil || v32 != float32(2.5) {
+		t.Fatalf("CloneValue float32 = %v, %v", v32, err)
+	}
+
+	deep := &Node{Type: "box"}
+	cur := deep
+	for i := 0; i < 25; i++ {
+		child := &Node{Type: "box"}
+		cur.Children = []*Node{child}
+		cur = child
+	}
+	AutoAssignIDs(deep)
+	ids, err := ValidateTree(deep)
+	if err != nil {
+		t.Fatalf("ValidateTree failed after AutoAssignIDs on deep tree: %v", err)
+	}
+	for id := range ids {
+		if len(id) > MaxIDBytes {
+			t.Fatalf("generated id exceeded MaxIDBytes: %d", len(id))
+		}
+	}
+
+	for _, invalid := range []*Node{
+		{Type: "input", Props: map[string]any{"disabled": true}},
+		{Type: "button", Props: map[string]any{"hidden": true}},
+		{Type: "timer", Props: map[string]any{"hidden": true}},
+		{Type: "list", Props: map[string]any{"disabled": true}},
+	} {
+		if _, err := ValidateTree(invalid); err == nil {
+			t.Fatalf("expected missing id error for %s", invalid.Type)
+		}
+	}
+}

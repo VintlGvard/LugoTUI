@@ -234,7 +234,7 @@ func (n *Node) SetInlineAction(prop string, fn any) *Node {
 	return n
 }
 
-func extractPayloadText(payload any) string {
+func ExtractPayloadText(payload any) string {
 	switch v := payload.(type) {
 	case string:
 		return v
@@ -299,7 +299,7 @@ func (n *Node) OnChangeText(fn func(value string)) *Node {
 		return n
 	}
 	return n.SetInlineAction("on_change", func(payload map[string]any) error {
-		fn(extractPayloadText(payload))
+		fn(ExtractPayloadText(payload))
 		return nil
 	})
 }
@@ -309,7 +309,7 @@ func (n *Node) OnChangeTextErr(fn func(value string) error) *Node {
 		return n
 	}
 	return n.SetInlineAction("on_change", func(payload map[string]any) error {
-		return fn(extractPayloadText(payload))
+		return fn(ExtractPayloadText(payload))
 	})
 }
 
@@ -322,7 +322,7 @@ func (n *Node) OnSubmitText(fn func(value string)) *Node {
 		return n
 	}
 	return n.SetInlineAction("on_submit", func(payload map[string]any) error {
-		fn(extractPayloadText(payload))
+		fn(ExtractPayloadText(payload))
 		return nil
 	})
 }
@@ -332,7 +332,7 @@ func (n *Node) OnSubmitTextErr(fn func(value string) error) *Node {
 		return n
 	}
 	return n.SetInlineAction("on_submit", func(payload map[string]any) error {
-		return fn(extractPayloadText(payload))
+		return fn(ExtractPayloadText(payload))
 	})
 }
 
