@@ -407,7 +407,7 @@ local app = {
     ui.text {text = 'Event Driven', fg = purple, width = 14},
     ui.text {text = '│', fg = '#1e293b', width = 1},
     ui.text {text = 'F1 Help · Ctrl+P Commands · F2 Scratchpad · F5 Reload', fg = muted, grow = 1},
-    ui.text {text = 'v0.2.2', fg = muted, width = 7}},
+    ui.text {text = 'v0.2.3', fg = muted, width = 7}},
    ui.row {grow = 1, gap = 1,
     ui.panel {title = ' Navigator ', width = '20%', min_width = 12, max_width = 24, bg = surface,
      ui.list {id = 'tasks', grow = 1, items = pages, on_select = 'select'}},

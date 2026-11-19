@@ -1,9 +1,9 @@
 ---
 name: lugotui
-description: Build, inspect, test, and debug Pure Go and Go+Lua TUI applications with LugoTUI (v0.2.2+). Covers the Go DSL (`github.com/VintlGvard/LugoTUI`), Lua UI declaration, Flexbox widgets, grapheme-safe state binding, 2D spatial/directional navigation, widget keymaps, background tasks, live reload, CLI/sandbox flags, and JSON Lines IPC socket control.
+description: Build, inspect, test, and debug Pure Go and Go+Lua TUI applications with LugoTUI (v0.2.3+). Covers the Go DSL (`github.com/VintlGvard/LugoTUI`), Lua UI declaration, Flexbox widgets, grapheme-safe state binding, 2D spatial/directional navigation, widget keymaps, background tasks, live reload, CLI/sandbox flags, and JSON Lines IPC socket control.
 ---
 
-# LugoTUI Development & Agent Control Skill (v0.2.2)
+# LugoTUI Development & Agent Control Skill (v0.2.3)
 
 Build terminal user interfaces in **Pure Go** (`github.com/VintlGvard/LugoTUI`, Go 1.24+) or **Go + Embedded Lua** (`require("ui")`) with deterministic Flexbox layout, grapheme-safe editing, background task orchestration, panic-safe terminal recovery, and JSON Lines IPC.
 
@@ -73,7 +73,7 @@ Key entry points on `lugotui`:
 
 Default theme: `lugotui.DefaultTheme()` (returns `lugotui.Theme`).
 
-### Runtime Stability Invariants (v0.2.2)
+### Runtime Stability Invariants (v0.2.3)
 - **Panic recovery**: enabled by default; panics inside `Program.Run()` restore the terminal cleanly and return an error wrapping `lugotui.ErrPanicRecovered`.
 - **Dynamic idle tick & diff skip**: when `NeedsTick() == false`, the idle ticker stops to avoid spinning CPU; redraw skips `screen.Show()` when neither the cell buffer nor cursor state changed, and updates cursor state before `screen.Show()`.
 
@@ -169,7 +169,7 @@ For direct low-level keyboard handling on a custom node, chain `.OnRawKey(func(e
 
 ---
 
-## 4. Input, Layout, Focus & Unicode Rules (v0.2.2)
+## 4. Input, Layout, Focus & Unicode Rules (v0.2.3)
 
 - **Editor key capture**: Active focused `input`, `textarea`, and active collection filter editing (`/`) consume typing and editing keys *before* global or ancestor `keymap` / `help` bindings. Typed runes like `'q'` or `'?'` no longer fall through to global hotkeys while editing.
 - **Grapheme-cluster correctness**: Text measurement (`TextWidth`), wrapping, truncation, `input`/`textarea` cursor movement, selection, and `char_limit` all count **Unicode grapheme clusters** via `uniseg` (so Cyrillic and multi-codepoint emoji stay intact).

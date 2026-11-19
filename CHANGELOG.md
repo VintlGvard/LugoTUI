@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-11-19
+
+### Added
+- **Theme Presets & Root Facade Parity**: Re-exported `TokyoNightTheme`, `CatppuccinTheme`, `DraculaTheme`, and `NordTheme` in `tui` and `lugotui`, alongside `ReservedKeys`, `NodeJSON`, `ProtocolError`, `ErrorCode`, `Demo`, and `Code*` constants in root package `lugotui`.
+- **Screen Cache Invalidation**: Added `Runtime.InvalidateScreen()` to force a clean redraw after terminal mode switches (`__alt_screen`) and resize signals.
+- **Extended Inline Action Signatures & Shortcut Modifiers**: Supported `func()`, `func(any) error`, `func(string)`, and `func(string) error` in `SetInlineAction` with upfront validation, plus `Alt+<rune>` and `Alt+Shift+<rune>` in `keyMatches`.
+
+### Fixed
+- **Core Cloning, IDs & Tree Validation**: Deep-cloned `[]int`, `[]float64`, `float32`, and `Node.Props` in `CloneValue`/`CloneNode` (resetting `LinesCache`), bounded auto-generated IDs in `AutoAssignIDs` to `MaxIDBytes` (128 bytes), required `ID` on interactive/stateful widgets even when `disabled` or `hidden`, and validated builder properties (`backdrop`, `current_dir`, `path`, `close_on_esc`, `multi_select`, `show_icons`, `item_height`, `selected`, `[]float64` sides).
+- **Layout, Border & Wide-Cell Rendering**: Unified border/padding insets (`nodeInsets`) and directional `margin` sides across `intrinsic`, `place`, `measuredHeight`, and `contentRect`, improved `row` height estimation, rendered partial borders (`NodeBorderSides`), tracked wide CJK/emoji continuation cells in `cellBuffer`, rendered custom `cursor_char` on focused editors, and formatted non-filterable `list` items cleanly.
+- **Transactional Rollback, Pure-Go Reload & Lifecycle**: Completed rollback of `Root`, `Nodes`, `State`, `Revision`, `layoutValid`, screen modes, and `GoActions` in `Action` (including full Lua metatable/key upvalue snapshots), enforced modal focus-trapping and `close_on_esc` in `Commit`/`Key`, handled `nil`/missing keys and errors cleanly in `syncBoundWidgets`/`Toggle`/`ui.set`, supported Pure-Go `Reload("")`, serialized empty `--socket` `events` as `[]`, checked trailing newlines in `frameReader.Read`, fixed `__alt_screen` dispatch without `OnEvent`, held `OSC52Clipboard` lock across writes, and pre-validated named/debounced background tasks before cancelling prior runs.
+- **Editors, Collections, Scroll & Primitives**: Added `KeyEnd` and `ScrollExtent` clamping to `scroll`, validated model mutations and notified state observers on editor changes, used `textWidth` in `Table` column widths, fixed `filepicker` `".."` visibility and `Backspace` navigation, guarded `mouseCollection` against drag re-activation and out-of-bounds `list` clicks, clamped `table` horizontal scroll, implemented `tree` `open_char`/`close_char`/`branch_indent`, fixed `viewport` soft-wrap logical line numbers and horizontal scroll clipping, synchronized `timer`/`stopwatch` pause props across ticks with rollback on `on_timeout` error, invalidated `help` layout on `?`, and fixed `README.md`, `docs/sandbox.md`, `docs/widgets.md`, `demo.lua`, and `skills/lugotui/SKILL.md`.
+
+### Security
+- **Input & Resource DoS Hardening**: Enforced `core.EstimateBytes` size checks and typed field validation (`validateCollection`), validated `progress.percent_format` placeholders, bounded `compiledRegexCache` to 256 entries, rejected host/non-serializable options in `runner.Sandbox`, and propagated `elf.Open` errors in `isDynamicallyLinkedELF`.
+
 ## [0.2.2] - 2026-11-14
 
 ### Changed
