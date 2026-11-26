@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-11-26
+
+### Added
+- **Windows Named Pipe IPC**: Added `\\.\pipe\...` Named Pipe support via `golang.org/x/sys/windows` overlapped I/O in `internal/engine/transport_windows.go` alongside Unix domain sockets on `!windows` (`internal/engine/transport_unix.go`).
+
+### Changed
+- **Streaming Control Coalescing**: Drained queued `ControlMsg` batches and coalesced high-frequency `ControlSet` and `ControlPatch` redraws to the configured `FPS` frame interval (`16 ms` default) in `internal/runner/run.go`.
+
 ## [0.2.3] - 2026-11-19
 
 ### Added

@@ -6,7 +6,7 @@ LugoTUI provides an optional Unix Domain Socket interface using a **JSON Lines**
 
 ## 1. Connection & Transport Security
 
-- **Socket Creation:** Configured via `--socket /path/to/socket.sock` in the CLI or `Options.SocketPath` in Go.
+- **Socket Creation:** Configured via `--socket /path/to/socket.sock` in the CLI or `Options.SocketPath` in Go. On Windows, Named Pipes (`\\.\pipe\...`) are supported in addition to `AF_UNIX` socket paths.
 - **Filesystem Permissions:** The socket is created with strict file permissions **`0600`** (read/write only by the creating user). Existing socket paths are not overwritten.
 - **Connection Limits:** Supports up to **4 concurrent connections**.
 - **Timeouts & Keep-Alive:** Persistent connections remain open while idle (`SetReadDeadline(time.Time{})`). A 2-second timeout applies only once bytes begin arriving for an in-flight frame or write operation.
