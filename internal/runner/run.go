@@ -418,6 +418,7 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 	}
 	dispatch()
 	drawRuntime(options, screen, r, diagnostic)
+	lastDraw := time.Now()
 	tickInterval := 16 * time.Millisecond
 	if options.FPS > 0 && options.FPS <= 240 {
 		tickInterval = time.Second / time.Duration(options.FPS)
@@ -429,6 +430,68 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 			ticker.Stop()
 		}
 	}()
+	pendingDraw := false
+	var drawTimer *time.Timer
+	var drawTicks <-chan time.Time
+	clearDrawTimer := func() {
+		pendingDraw = false
+		if drawTimer != nil {
+			if !drawTimer.Stop() {
+				select {
+				case <-drawTimer.C:
+				default:
+				}
+			}
+			drawTimer = nil
+			drawTicks = nil
+		}
+	}
+	defer clearDrawTimer()
+	applyControl := func(msg ControlMsg) (quit bool, immediate bool, coalesced bool, ctrlErr error) {
+		switch msg.Kind {
+		case ControlQuit:
+			if msg.Reply != nil {
+				msg.Reply <- nil
+			}
+			return true, false, false, nil
+		case ControlReload:
+			doReload()
+			ctrlErr = err
+			immediate = true
+		case ControlAction:
+			ctrlErr = r.Action(msg.Action, msg.Payload)
+			if errors.Is(ctrlErr, engine.ErrQuit) {
+				shouldQuit = true
+				ctrlErr = nil
+			}
+			if ctrlErr == nil {
+				diagnostic = ""
+			}
+			immediate = true
+		case ControlSet, ControlPatch:
+			if msg.Kind == ControlSet {
+				ctrlErr = r.Set(msg.Key, msg.Value)
+			} else {
+				ctrlErr = r.Patch(msg.ID, msg.Props)
+			}
+			if ctrlErr == nil {
+				diagnostic = ""
+				coalesced = true
+			} else {
+				immediate = true
+			}
+		case ControlAltScreen:
+			r.AltScreen = msg.AltScreen
+			r.Inline = !msg.AltScreen
+			r.InvalidateScreen()
+			screen.Sync()
+			immediate = true
+		}
+		if msg.Reply != nil {
+			msg.Reply <- ctrlErr
+		}
+		return false, immediate, coalesced, ctrlErr
+	}
 	for {
 		if r.NeedsTick() {
 			if ticker == nil {
@@ -460,54 +523,52 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 				err = r.Tick(now)
 				redraw = before != r.AnimationRevision
 			}
+		case <-drawTicks:
+			drawTimer = nil
+			drawTicks = nil
+			if pendingDraw {
+				redraw = true
+			}
 		case <-pending:
 		case result := <-r.TaskResults():
 			err = r.HandleTask(result)
 		case msg := <-options.Control:
-			var ctrlErr error
-			switch msg.Kind {
-			case ControlQuit:
-				if msg.Reply != nil {
-					msg.Reply <- nil
+			var immediate, coalesced bool
+		drainLoop:
+			for {
+				q, imm, coal, ctrlErr := applyControl(msg)
+				if ctrlErr != nil {
+					err = ctrlErr
 				}
-				return nil
-			case ControlReload:
-				doReload()
-				ctrlErr = err
-				redraw = true
-			case ControlAction:
-				ctrlErr = r.Action(msg.Action, msg.Payload)
-				if errors.Is(ctrlErr, engine.ErrQuit) {
-					shouldQuit = true
-					ctrlErr = nil
+				immediate = immediate || imm
+				coalesced = coalesced || coal
+				if q {
+					if pendingDraw || immediate || coalesced {
+						clearDrawTimer()
+						drawRuntime(options, screen, r, diagnostic)
+					}
+					return nil
 				}
-				if ctrlErr == nil {
-					diagnostic = ""
+				select {
+				case msg = <-options.Control:
+				default:
+					break drainLoop
 				}
-				redraw = true
-			case ControlSet:
-				ctrlErr = r.Set(msg.Key, msg.Value)
-				if ctrlErr == nil {
-					diagnostic = ""
-				}
-				redraw = true
-			case ControlPatch:
-				ctrlErr = r.Patch(msg.ID, msg.Props)
-				if ctrlErr == nil {
-					diagnostic = ""
-				}
-				redraw = true
-			case ControlAltScreen:
-				r.AltScreen = msg.AltScreen
-				r.Inline = !msg.AltScreen
-				r.InvalidateScreen()
-				screen.Sync()
-				redraw = true
 			}
-			if msg.Reply != nil {
-				msg.Reply <- ctrlErr
+			if immediate {
+				redraw = true
+			} else if coalesced {
+				elapsed := time.Since(lastDraw)
+				if elapsed >= tickInterval {
+					redraw = true
+				} else {
+					pendingDraw = true
+					if drawTimer == nil {
+						drawTimer = time.NewTimer(tickInterval - elapsed)
+						drawTicks = drawTimer.C
+					}
+				}
 			}
-			err = ctrlErr
 		case request := <-requests:
 			var queued []engine.HostEvent
 			if hasEventHandler {
@@ -586,8 +647,10 @@ func runScreen(options Options, screen tcell.Screen, r *engine.Runtime, readSour
 		if shouldQuit {
 			return nil
 		}
-		if redraw || called || revision != r.Revision || focus != r.Focus || previousDiagnostic != diagnostic {
+		if redraw || called || (!pendingDraw && (revision != r.Revision || focus != r.Focus)) || previousDiagnostic != diagnostic {
+			clearDrawTimer()
 			drawRuntime(options, screen, r, diagnostic)
+			lastDraw = time.Now()
 		}
 	}
 }

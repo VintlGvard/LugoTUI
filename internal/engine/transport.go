@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"sync"
 	"time"
 
@@ -87,17 +86,8 @@ func (f *frameReader) Read(p []byte) (int, error) {
 }
 
 func ServeAgent(path string, requests chan<- AgentRequest, done <-chan struct{}) (func(), error) {
-	if _, e := os.Lstat(path); e == nil {
-		return nil, errors.New("socket path already exists; choose unused path")
-	} else if !os.IsNotExist(e) {
-		return nil, e
-	}
-	listener, e := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	listener, e := listenAgent(path)
 	if e != nil {
-		return nil, e
-	}
-	if e = os.Chmod(path, 0600); e != nil {
-		listener.Close()
 		return nil, e
 	}
 	slots := make(chan struct{}, 4)
@@ -105,7 +95,7 @@ func ServeAgent(path string, requests chan<- AgentRequest, done <-chan struct{})
 	var once sync.Once
 	stopped := make(chan struct{})
 	var mu sync.Mutex
-	connections := map[*net.UnixConn]struct{}{}
+	connections := map[net.Conn]struct{}{}
 	shutdown := func() {
 		once.Do(func() {
 			mu.Lock()
@@ -130,7 +120,7 @@ func ServeAgent(path string, requests chan<- AgentRequest, done <-chan struct{})
 	go func() {
 		defer wg.Done()
 		for {
-			conn, e := listener.AcceptUnix()
+			conn, e := listener.Accept()
 			if e != nil {
 				return
 			}

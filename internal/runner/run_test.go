@@ -606,3 +606,73 @@ return {
 		t.Fatalf("__alt_screen leaked into socket events: %s", evReply)
 	}
 }
+
+func TestRunCoalescesBurstControlSetAndPatch(t *testing.T) {
+	r, err := engine.Load(`local ui = require('ui')
+return {
+  view = ui.text { id = 'status', bind = 'stream' }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &observedScreen{SimulationScreen: tcell.NewSimulationScreen("UTF-8"), shows: make(chan string, 128)}
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	s.SetSize(30, 5)
+	control := make(chan ControlMsg, 32)
+	done := make(chan error, 1)
+	go func() {
+		done <- runScreen(Options{
+			FPS:          30,
+			Control:      control,
+			ReservedKeys: testKeys(),
+		}, s, r, nil)
+	}()
+	receive(t, s.shows)
+
+	for i := 0; i < 20; i++ {
+		reply := make(chan error, 1)
+		control <- ControlMsg{
+			Kind:  ControlSet,
+			Key:   "stream",
+			Value: fmt.Sprintf("tok-%02d", i),
+			Reply: reply,
+		}
+		if err := receive(t, reply); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deadline := time.After(2 * time.Second)
+	var lastFrame string
+	frames := 0
+	for {
+		select {
+		case frame := <-s.shows:
+			frames++
+			lastFrame = frame
+			if strings.Contains(lastFrame, "tok-19") {
+				goto doneFrames
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for final coalesced frame, last=%q", lastFrame)
+		}
+	}
+doneFrames:
+	reply := make(chan error, 1)
+	control <- ControlMsg{Kind: ControlQuit, Reply: reply}
+	if err := receive(t, reply); err != nil {
+		t.Fatal(err)
+	}
+	if err := receive(t, done); err != nil {
+		t.Fatal(err)
+	}
+	frames += len(s.shows)
+	if !strings.Contains(lastFrame, "tok-19") {
+		t.Fatalf("final frame missing tok-19: %q", lastFrame)
+	}
+	if frames > 4 {
+		t.Fatalf("expected burst ControlSet to coalesce into <= 4 frames, got %d", frames)
+	}
+}
